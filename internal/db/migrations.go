@@ -22,7 +22,17 @@ var migrationStatements = []string{
 	`DO $$
 	BEGIN
 		IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'trip_status') THEN
-			CREATE TYPE trip_status AS ENUM ('OK', 'ROUTE_VIOLATION', 'MISMATCH_PLATE', 'NO_ASSIGNMENT', 'SUSPICIOUS_VOLUME');
+			CREATE TYPE trip_status AS ENUM (
+				'OK',
+				'ROUTE_VIOLATION',
+				'FOREIGN_AREA',
+				'MISMATCH_PLATE',
+				'OVER_CAPACITY',
+				'NO_AREA_WORK',
+				'NO_ASSIGNMENT',
+				'SUSPICIOUS_VOLUME',
+				'OVER_CONTRACT_LIMIT'
+			);
 		ELSE
 			-- Если тип уже существует, но имеет неправильные значения, пересоздаем его
 			-- (только если таблица trips пустая или не существует)
@@ -33,7 +43,17 @@ var migrationStatements = []string{
 						-- Таблица пустая или не существует - можно пересоздать ENUM
 						-- Сохраняем информацию о таблице перед удалением
 						DROP TYPE IF EXISTS trip_status CASCADE;
-						CREATE TYPE trip_status AS ENUM ('OK', 'ROUTE_VIOLATION', 'MISMATCH_PLATE', 'NO_ASSIGNMENT', 'SUSPICIOUS_VOLUME');
+						CREATE TYPE trip_status AS ENUM (
+							'OK',
+							'ROUTE_VIOLATION',
+							'FOREIGN_AREA',
+							'MISMATCH_PLATE',
+							'OVER_CAPACITY',
+							'NO_AREA_WORK',
+							'NO_ASSIGNMENT',
+							'SUSPICIOUS_VOLUME',
+							'OVER_CONTRACT_LIMIT'
+						);
 						-- Таблица trips будет пересоздана позже в миграции
 					ELSE
 					-- Таблица не пустая - добавляем новые значения
@@ -43,14 +63,26 @@ var migrationStatements = []string{
 					IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'ROUTE_VIOLATION' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'trip_status')) THEN
 						ALTER TYPE trip_status ADD VALUE 'ROUTE_VIOLATION';
 					END IF;
+					IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'FOREIGN_AREA' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'trip_status')) THEN
+						ALTER TYPE trip_status ADD VALUE 'FOREIGN_AREA';
+					END IF;
 					IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'MISMATCH_PLATE' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'trip_status')) THEN
 						ALTER TYPE trip_status ADD VALUE 'MISMATCH_PLATE';
+					END IF;
+					IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'OVER_CAPACITY' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'trip_status')) THEN
+						ALTER TYPE trip_status ADD VALUE 'OVER_CAPACITY';
+					END IF;
+					IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'NO_AREA_WORK' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'trip_status')) THEN
+						ALTER TYPE trip_status ADD VALUE 'NO_AREA_WORK';
 					END IF;
 					IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'NO_ASSIGNMENT' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'trip_status')) THEN
 						ALTER TYPE trip_status ADD VALUE 'NO_ASSIGNMENT';
 					END IF;
 					IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'SUSPICIOUS_VOLUME' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'trip_status')) THEN
 						ALTER TYPE trip_status ADD VALUE 'SUSPICIOUS_VOLUME';
+					END IF;
+					IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'OVER_CONTRACT_LIMIT' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'trip_status')) THEN
+						ALTER TYPE trip_status ADD VALUE 'OVER_CONTRACT_LIMIT';
 					END IF;
 				END IF;
 			END IF;

@@ -14,7 +14,7 @@
 - Автоматическое обновление статусов по фактам: первый рейс или отметка водителя переводит тикет в `IN_PROGRESS`, закрытие всех рейсов + отметки водителей переводят в `COMPLETED`.
 - Trip ingestion:
   - Привязка рейса к тикету по `ticket_assignment` (driver/vehicle). Если сопоставить нельзя, рейс сохраняется со статусом `NO_ASSIGNMENT`.
-  - Контроль нарушений (`ROUTE_VIOLATION`, `MISMATCH_PLATE`, `SUSPICIOUS_VOLUME`, …) и отображение бейджа `has_violations`.
+- Контроль нарушений (`ROUTE_VIOLATION`, `FOREIGN_AREA`, `MISMATCH_PLATE`, `OVER_CAPACITY`, `NO_AREA_WORK`, `NO_ASSIGNMENT`, `SUSPICIOUS_VOLUME`, `OVER_CONTRACT_LIMIT`) и отображение бейджа `has_violations` + `violation_reason`.
 - Апелляции водителей по рейсам: подача, просмотр, комментарии, обновление статусов KGU/Акиматом.
 
 ## Требования
@@ -54,7 +54,7 @@ go run ./cmd/ticket-service
 
 - **Ticket** — участок + подрядчик + контракт + плановый период. Никаких нормативов, только фактические данные.
 - **TicketAssignment** — связь `ticket ↔ driver ↔ vehicle`, статус отметки водителя (`NOT_STARTED`, `IN_WORK`, `COMPLETED`).
-- **Trip** — факт рейса от камер (entry/exit LPR и volume события). Статусы: `OK`, `ROUTE_VIOLATION`, `MISMATCH_PLATE`, `NO_ASSIGNMENT`, `SUSPICIOUS_VOLUME`.
+- **Trip** — факт рейса от камер (entry/exit LPR и volume события). Статусы: `OK`, `ROUTE_VIOLATION`, `FOREIGN_AREA`, `MISMATCH_PLATE`, `OVER_CAPACITY`, `NO_AREA_WORK`, `NO_ASSIGNMENT`, `SUSPICIOUS_VOLUME`, `OVER_CONTRACT_LIMIT`. Поле `violation_reason` заполняется `snowops-violations-service` для быстрого отображения причины нарушения в карточке тикета.
 - **Appeal** — апелляция водителя по рейсу (`SUBMITTED → UNDER_REVIEW → NEED_INFO → APPROVED/REJECTED → CLOSED`).
 
 ## API
@@ -143,6 +143,7 @@ go run ./cmd/ticket-service
     }
   }
   ```
+- Каждый объект в `trips` содержит `violation_reason`, если сервис нарушений зафиксировал и пояснил проблему.
 - **Ошибки**
   ```json
   { "error": "описание" }
