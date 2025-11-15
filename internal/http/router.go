@@ -16,11 +16,11 @@ func NewRouter(handler *Handler, authMiddleware gin.HandlerFunc, env string) *gi
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"*"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
-		ExposeHeaders:    []string{"Content-Type"},
-		MaxAge:           12 * time.Hour,
+		AllowAllOrigins: true,
+		AllowMethods:    []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:    []string{"*"},
+		ExposeHeaders:   []string{"Content-Type"},
+		MaxAge:          12 * time.Hour,
 	}))
 
 	router.GET("/healthz", func(c *gin.Context) {
@@ -31,4 +31,3 @@ func NewRouter(handler *Handler, authMiddleware gin.HandlerFunc, env string) *gi
 
 	return router
 }
-
