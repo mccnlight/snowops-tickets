@@ -23,11 +23,19 @@ type AuthConfig struct {
 	AccessSecret string
 }
 
+type ExternalServicesConfig struct {
+	AuthServiceURL       string
+	RolesServiceURL      string
+	OperationsServiceURL string
+	AIServiceURL         string
+}
+
 type Config struct {
-	Environment string
-	HTTP        HTTPConfig
-	DB          DBConfig
-	Auth        AuthConfig
+	Environment      string
+	HTTP             HTTPConfig
+	DB               DBConfig
+	Auth             AuthConfig
+	ExternalServices ExternalServicesConfig
 }
 
 func Load() (*Config, error) {
@@ -57,6 +65,12 @@ func Load() (*Config, error) {
 		},
 		Auth: AuthConfig{
 			AccessSecret: v.GetString("JWT_ACCESS_SECRET"),
+		},
+		ExternalServices: ExternalServicesConfig{
+			AuthServiceURL:       v.GetString("AUTH_SERVICE_URL"),
+			RolesServiceURL:      v.GetString("ROLES_SERVICE_URL"),
+			OperationsServiceURL: v.GetString("OPERATIONS_SERVICE_URL"),
+			AIServiceURL:         v.GetString("AI_SERVICE_URL"),
 		},
 	}
 

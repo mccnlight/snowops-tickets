@@ -28,12 +28,21 @@ func main() {
 		appLogger.Fatal().Err(err).Msg("failed to connect database")
 	}
 
+	// Repositories
 	ticketRepo := repository.NewTicketRepository(database)
-	ticketService := service.NewTicketService(ticketRepo)
+	assignmentRepo := repository.NewAssignmentRepository(database)
+	tripRepo := repository.NewTripRepository(database)
+	appealRepo := repository.NewAppealRepository(database)
+
+	// Services
+	ticketService := service.NewTicketService(ticketRepo, tripRepo, assignmentRepo, appealRepo)
+	assignmentService := service.NewAssignmentService(assignmentRepo, ticketRepo, ticketService)
+	tripService := service.NewTripService(tripRepo, ticketRepo, assignmentRepo, ticketService)
+	appealService := service.NewAppealService(appealRepo, tripRepo, ticketRepo, assignmentRepo)
 
 	tokenParser := auth.NewParser(cfg.Auth.AccessSecret)
 
-	handler := httphandler.NewHandler(ticketService, appLogger)
+	handler := httphandler.NewHandler(ticketService, assignmentService, tripService, appealService, appLogger)
 	authMiddleware := middleware.Auth(tokenParser)
 	router := httphandler.NewRouter(handler, authMiddleware, cfg.Environment)
 

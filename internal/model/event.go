@@ -15,6 +15,7 @@ type LprEvent struct {
 	DetectedAt  time.Time  `gorm:"not null;index" json:"detected_at"`
 	Direction   *string    `gorm:"type:varchar(20)" json:"direction"`
 	Confidence  *float64   `json:"confidence"`
+	PhotoURL    *string    `gorm:"type:text" json:"photo_url"`
 	CreatedAt   time.Time  `gorm:"autoCreateTime" json:"created_at"`
 }
 
@@ -36,6 +37,7 @@ type VolumeEvent struct {
 	DetectedVolume float64   `gorm:"not null" json:"detected_volume"`
 	DetectedAt    time.Time  `gorm:"not null;index" json:"detected_at"`
 	Direction     *string    `gorm:"type:varchar(20)" json:"direction"`
+	PhotoURL      *string    `gorm:"type:text" json:"photo_url"`
 	CreatedAt     time.Time  `gorm:"autoCreateTime" json:"created_at"`
 }
 

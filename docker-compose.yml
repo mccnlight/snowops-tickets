@@ -1,16 +1,22 @@
+version: '3.8'
+
 services:
   postgres:
-    image: postgis/postgis:15-3.4
-    restart: unless-stopped
+    image: postgres:15
+    container_name: snowops-postgres
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: snowops_tickets
+      POSTGRES_DB: postgres
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
-  pgdata:
-
+  postgres_data:

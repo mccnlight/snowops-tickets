@@ -21,6 +21,7 @@ type Ticket struct {
 	ID             uuid.UUID    `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()" json:"id"`
 	CleaningAreaID uuid.UUID    `gorm:"type:uuid;not null;index" json:"cleaning_area_id"`
 	ContractorID   uuid.UUID    `gorm:"type:uuid;not null;index" json:"contractor_id"`
+	ContractID     uuid.UUID    `gorm:"type:uuid;not null;index" json:"contract_id"`
 	CreatedByOrgID uuid.UUID    `gorm:"type:uuid;not null;index" json:"created_by_org_id"`
 	Status         TicketStatus `gorm:"type:ticket_status;not null;default:PLANNED" json:"status"`
 	PlannedStartAt time.Time    `gorm:"not null" json:"planned_start_at"`
@@ -45,4 +46,3 @@ func (t *Ticket) BeforeCreate(tx *gorm.DB) error {
 	}
 	return nil
 }
-

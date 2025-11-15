@@ -71,6 +71,10 @@ HTTP_HOST=0.0.0.0
 HTTP_PORT=8080
 DB_DSN=postgres://postgres:postgres@localhost:5432/snowops_tickets?sslmode=disable
 JWT_ACCESS_SECRET=dev-secret-change-me-in-production
+AUTH_SERVICE_URL=http://localhost:8081
+ROLES_SERVICE_URL=http://localhost:8082
+OPERATIONS_SERVICE_URL=http://localhost:8083
+AI_SERVICE_URL=
 ```
 
 ## Шаг 2: Проверка миграций
@@ -173,12 +177,12 @@ curl http://localhost:8080/healthz
 Для тестирования защищенных endpoints вам понадобится JWT токен. Получите его из auth-service:
 
 ```bash
-# Пример запроса к auth-service (замените на реальный endpoint)
-curl -X POST http://localhost:8081/auth/login \
+# Пример запроса к auth-service
+curl -X POST http://localhost:7080/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{
-    "email": "admin@example.com",
-    "password": "password"
+    "login": "admin",
+    "password": "admin123"
   }'
 ```
 
@@ -193,11 +197,13 @@ curl -X POST http://localhost:8081/auth/login \
 - `base_url`: `http://localhost:8080`
 - `token`: `<ваш_jwt_токен>`
 
-### 5.2. Создание тикета (POST /akimat/tickets)
+### 5.2. Создание тикета (POST /kgu/tickets)
+
+**ВАЖНО:** Теперь создание тикетов доступно только через `/kgu/tickets` (KGU ZKH), а не через `/akimat/tickets`.
 
 **Запрос:**
 - Метод: `POST`
-- URL: `{{base_url}}/akimat/tickets`
+- URL: `{{base_url}}/kgu/tickets`
 - Headers:
   - `Authorization`: `Bearer {{token}}`
   - `Content-Type`: `application/json`
@@ -206,11 +212,14 @@ curl -X POST http://localhost:8081/auth/login \
 {
   "cleaning_area_id": "550e8400-e29b-41d4-a716-446655440000",
   "contractor_id": "550e8400-e29b-41d4-a716-446655440001",
+  "contract_id": "550e8400-e29b-41d4-a716-446655440002",
   "planned_start_at": "2024-01-15T08:00:00Z",
   "planned_end_at": "2024-01-15T18:00:00Z",
   "description": "Очистка территории от снега"
 }
 ```
+
+**ВАЖНО:** Поле `contract_id` теперь обязательное!
 
 **Ожидаемый ответ:**
 - Статус: `201 Created`
@@ -262,7 +271,9 @@ curl -X POST http://localhost:8081/auth/login \
 }
 ```
 
-### 5.4. Получение тикета по ID (GET /akimat/tickets/:id)
+### 5.4. Получение детальной информации о тикете (GET /kgu/tickets/:id)
+
+**ВАЖНО:** Этот endpoint теперь возвращает полную информацию о тикете, включая метрики, назначения, рейсы и обжалования.
 
 **Запрос:**
 - Метод: `GET`
@@ -276,44 +287,90 @@ curl -X POST http://localhost:8081/auth/login \
 ```json
 {
   "data": {
-    "id": "...",
-    "cleaning_area_id": "...",
-    "contractor_id": "...",
-    "status": "PLANNED",
-    ...
+    "ticket": {
+      "id": "...",
+      "cleaning_area_id": "...",
+      "contractor_id": "...",
+      "contract_id": "...",
+      "status": "PLANNED",
+      ...
+    },
+    "metrics": {
+      "total_trips": 0,
+      "total_volume_m3": 0,
+      "has_violations": false
+    },
+    "assignments": [],
+    "trips": [],
+    "appeals": []
   }
 }
 ```
 
 ### 5.5. Тестирование для разных ролей
 
-#### 5.5.1. KGU (КГУ)
+#### 5.5.1. KGU ZKH (ранее TOO)
 
 **Создание тикета:**
 - Метод: `POST`
 - URL: `{{base_url}}/kgu/tickets`
-- Headers и Body аналогичны запросу для акимата
+- Headers и Body аналогичны запросу выше
 
 **Получение списка:**
 - Метод: `GET`
 - URL: `{{base_url}}/kgu/tickets`
 
-#### 5.5.2. Contractor (Подрядчик)
+**Отмена тикета:**
+- Метод: `PUT`
+- URL: `{{base_url}}/kgu/tickets/:id/cancel`
 
-**Получение списка (только чтение):**
-- Метод: `GET`
-- URL: `{{base_url}}/contractor/tickets`
-
-**Попытка создания (должна вернуть 403):**
-- Метод: `POST`
-- URL: `{{base_url}}/contractor/tickets`
-- Ожидаемый статус: `403 Forbidden`
+**Закрытие тикета:**
+- Метод: `PUT`
+- URL: `{{base_url}}/kgu/tickets/:id/close`
 
 #### 5.5.3. Driver (Водитель)
 
-**Получение списка:**
+**Получение списка своих тикетов:**
 - Метод: `GET`
 - URL: `{{base_url}}/driver/tickets`
+
+**Получение деталей тикета:**
+- Метод: `GET`
+- URL: `{{base_url}}/driver/tickets/:id`
+
+**Отметка "В работе":**
+- Метод: `PUT`
+- URL: `{{base_url}}/driver/assignments/:id/mark-in-work`
+
+**Отметка "Завершено":**
+- Метод: `PUT`
+- URL: `{{base_url}}/driver/assignments/:id/mark-completed`
+
+**Создание обжалования:**
+- Метод: `POST`
+- URL: `{{base_url}}/driver/appeals`
+- Body:
+```json
+{
+  "trip_id": "550e8400-e29b-41d4-a716-446655440005",
+  "appeal_reason_type": "Ошибка камеры/распознавания",
+  "comment": "Номер распознан неверно"
+}
+```
+
+**Список обжалований:**
+- Метод: `GET`
+- URL: `{{base_url}}/driver/appeals?ticket_id=:ticket_id`
+
+**Добавление комментария к обжалованию:**
+- Метод: `POST`
+- URL: `{{base_url}}/driver/appeals/:id/comments`
+- Body:
+```json
+{
+  "content": "Дополнительная информация"
+}
+```
 
 ### 5.6. Тестирование ошибок
 
@@ -419,18 +476,70 @@ LIMIT 10;
 
 ## Чек-лист проверки
 
+### Базовая функциональность
 - [ ] База данных запущена и доступна
 - [ ] Миграции выполнены успешно (все таблицы созданы)
+- [ ] Все новые поля присутствуют (contract_id, driver_mark_status, etc.)
 - [ ] Health endpoint возвращает `200 OK`
 - [ ] JWT токен получен и валиден
-- [ ] Создание тикета работает (POST /akimat/tickets)
-- [ ] Получение списка тикетов работает (GET /akimat/tickets)
-- [ ] Получение тикета по ID работает (GET /akimat/tickets/:id)
+
+### UC5.01 - Список тикетов
+- [ ] Создание тикета работает (POST /kgu/tickets)
+- [ ] Получение списка тикетов работает (GET /kgu/tickets)
 - [ ] Фильтрация по статусу работает
 - [ ] Фильтрация по contractor_id работает
-- [ ] Проверка прав доступа работает (403 для contractor при создании)
-- [ ] Обработка ошибок работает (401, 400, 404)
+- [ ] Фильтрация по contract_id работает
+- [ ] Фильтрация по периодам работает
+
+### UC5.02 - Создание тикета
+- [ ] Валидация обязательных полей работает
+- [ ] Валидация периода работает (planned_start_at < planned_end_at)
+- [ ] Поле contract_id обязательное
+
+### UC5.03 - Карточка тикета
+- [ ] Получение детальной информации работает (GET /kgu/tickets/:id)
+- [ ] Метрики рассчитываются корректно (total_trips, total_volume_m3, has_violations)
+- [ ] Назначения отображаются
+- [ ] Рейсы отображаются
+- [ ] Обжалования отображаются
+
+### Управление назначениями
+- [ ] Создание назначения работает (POST /contractor/tickets/:id/assignments)
+- [ ] Удаление назначения работает (DELETE /contractor/assignments/:id)
+- [ ] Отметка "В работе" работает (PUT /driver/assignments/:id/mark-in-work)
+- [ ] Отметка "Завершено" работает (PUT /driver/assignments/:id/mark-completed)
+- [ ] Автоматический переход тикета в IN_PROGRESS при отметке "В работе"
+
+### Управление статусами
+- [ ] Отмена тикета работает (PUT /kgu/tickets/:id/cancel)
+- [ ] Завершение тикета работает (PUT /contractor/tickets/:id/complete)
+- [ ] Закрытие тикета работает (PUT /kgu/tickets/:id/close)
+- [ ] Валидация условий для каждого действия работает
+
+### Обжалования
+- [ ] Создание обжалования работает (POST /driver/appeals)
+- [ ] Список обжалований работает (GET /driver/appeals)
+- [ ] Добавление комментария работает (POST /driver/appeals/:id/comments)
+
+### Права доступа
+- [ ] Акимат - только просмотр (403 при создании)
+- [ ] KGU ZKH - создание и управление своими тикетами
+- [ ] Подрядчик - управление назначениями и завершение
+- [ ] Водитель - только свои данные
+
+### Обработка ошибок
+- [ ] Обработка ошибок работает (401, 400, 403, 404, 409)
 - [ ] Логи не содержат ошибок
+
+## Быстрая проверка через скрипт
+
+Используйте PowerShell скрипт для автоматической проверки:
+
+```powershell
+.\verify.ps1 -Token "your_jwt_token"
+```
+
+Для полной проверки см. файл `VERIFICATION.md`
 - [ ] Данные корректно сохраняются в БД
 
 ## Дополнительные тесты
@@ -505,7 +614,7 @@ unable to get image 'postgres:15': error during connect: in the default daemon c
 ### Проблема: Тикеты не создаются
 
 **Решение:**
-1. Проверьте права доступа пользователя (должен быть AKIMAT_ADMIN или KGU_ADMIN)
+1. Проверьте права доступа пользователя (должен быть AKIMAT_ADMIN или TOO_ADMIN)
 2. Убедитесь, что UUID в запросе валидны
 3. Проверьте формат дат (должен быть RFC3339)
 4. Проверьте логи на наличие ошибок валидации
