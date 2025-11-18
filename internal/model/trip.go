@@ -18,7 +18,6 @@ const (
 	TripStatusNoAreaWork        TripStatus = "NO_AREA_WORK"
 	TripStatusNoAssignment      TripStatus = "NO_ASSIGNMENT"
 	TripStatusSuspiciousVolume  TripStatus = "SUSPICIOUS_VOLUME"
-	TripStatusNoExitCamera      TripStatus = "NO_EXIT_CAMERA"
 	TripStatusOverContractLimit TripStatus = "OVER_CONTRACT_LIMIT"
 )
 
@@ -28,7 +27,6 @@ type Trip struct {
 	TicketAssignmentID  *uuid.UUID `gorm:"type:uuid;index" json:"ticket_assignment_id"`
 	DriverID            *uuid.UUID `gorm:"type:uuid;index" json:"driver_id"`
 	VehicleID           *uuid.UUID `gorm:"type:uuid;index" json:"vehicle_id"`
-	VehicleBodyVolumeM3 *float64   `json:"vehicle_body_volume_m3"`
 	CameraID            *uuid.UUID `gorm:"type:uuid" json:"camera_id"`
 	PolygonID           *uuid.UUID `gorm:"type:uuid" json:"polygon_id"`
 	VehiclePlateNumber  string     `gorm:"type:varchar(32)" json:"vehicle_plate_number"`

@@ -19,7 +19,6 @@ type Handler struct {
 	assignmentService *service.AssignmentService
 	tripService       *service.TripService
 	appealService     *service.AppealService
-	navigationService *service.NavigationService
 	log               zerolog.Logger
 }
 
@@ -28,7 +27,6 @@ func NewHandler(
 	assignmentService *service.AssignmentService,
 	tripService *service.TripService,
 	appealService *service.AppealService,
-	navigationService *service.NavigationService,
 	log zerolog.Logger,
 ) *Handler {
 	return &Handler{
@@ -36,7 +34,6 @@ func NewHandler(
 		assignmentService: assignmentService,
 		tripService:       tripService,
 		appealService:     appealService,
-		navigationService: navigationService,
 		log:               log,
 	}
 }
@@ -51,7 +48,7 @@ func (h *Handler) Register(r *gin.Engine, authMiddleware gin.HandlerFunc) {
 		akimat.GET("/tickets/:id", h.getTicketDetails)
 	}
 
-	// KGU ZKH (TOO) - ticket creation and high level management
+	// KGU ZKH (TOO) - создание и управление тикетами
 	kgu := protected.Group("/kgu")
 	{
 		kgu.GET("/tickets", h.listTickets)
@@ -66,7 +63,7 @@ func (h *Handler) Register(r *gin.Engine, authMiddleware gin.HandlerFunc) {
 		contractor.GET("/tickets", h.listTickets)
 		contractor.GET("/tickets/:id", h.getTicketDetails)
 		contractor.PUT("/tickets/:id/complete", h.completeTicket)
-		// Assignment management
+		// Назначения
 		contractor.POST("/tickets/:id/assignments", h.createAssignment)
 		contractor.DELETE("/assignments/:id", h.deleteAssignment)
 		contractor.GET("/tickets/:id/assignments", h.listAssignments)
@@ -76,12 +73,10 @@ func (h *Handler) Register(r *gin.Engine, authMiddleware gin.HandlerFunc) {
 	{
 		driver.GET("/tickets", h.listTickets)
 		driver.GET("/tickets/:id", h.getTicketDetails)
-		driver.GET("/trips", h.listDriverTrips)
-		driver.GET("/navigation", h.getNavigationHint)
-		// Driver self-reporting
+		// Обновление статуса водителя
 		driver.PUT("/assignments/:id/mark-in-work", h.markAssignmentInWork)
 		driver.PUT("/assignments/:id/mark-completed", h.markAssignmentCompleted)
-		// Appeals
+		// Обжалования
 		driver.POST("/appeals", h.createAppeal)
 		driver.GET("/appeals", h.listMyAppeals)
 		driver.GET("/appeals/:id", h.getAppeal)
@@ -147,50 +142,6 @@ func (h *Handler) getTicketDetails(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, successResponse(details))
-}
-
-func (h *Handler) listDriverTrips(c *gin.Context) {
-	principal, ok := middleware.MustPrincipal(c)
-	if !ok {
-		c.JSON(http.StatusUnauthorized, errorResponse("missing principal"))
-		return
-	}
-
-	ticketIDParam := strings.TrimSpace(c.Query("ticket_id"))
-	var ticketID *string
-	if ticketIDParam != "" {
-		ticketID = &ticketIDParam
-	}
-
-	trips, err := h.tripService.ListDriverTrips(c.Request.Context(), principal, ticketID)
-	if err != nil {
-		h.handleError(c, err)
-		return
-	}
-
-	c.JSON(http.StatusOK, successResponse(trips))
-}
-
-func (h *Handler) getNavigationHint(c *gin.Context) {
-	principal, ok := middleware.MustPrincipal(c)
-	if !ok {
-		c.JSON(http.StatusUnauthorized, errorResponse("missing principal"))
-		return
-	}
-
-	ticketIDParam := strings.TrimSpace(c.Query("ticket_id"))
-	var ticketID *string
-	if ticketIDParam != "" {
-		ticketID = &ticketIDParam
-	}
-
-	hint, err := h.navigationService.BuildDriverHint(c.Request.Context(), principal, ticketID)
-	if err != nil {
-		h.handleError(c, err)
-		return
-	}
-
-	c.JSON(http.StatusOK, successResponse(hint))
 }
 
 func (h *Handler) listTickets(c *gin.Context) {
