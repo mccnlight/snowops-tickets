@@ -1,106 +1,35 @@
-# SnowOps Ticket Service
+# Snowops Ticket Service
 
-Сервис реализует основную часть EPIC‑5 «Тикеты» из продуктового ТЗ. Он предоставляет REST‑эндпойнты для ролей (Акимат, KGU, подрядчики, водители), принимает факты рейсов (камера + GPS), рассчитывает метрики и формирует подсказки навигации для мобильного клиента.
+Сервис тикетов обеспечивает полный цикл управления уборочными заданиями: создание тикета KGU, назначение водителей подрядчиком, фиксация рейсов и нарушений по данным камер, обжалование со стороны водителя. Все данные хранятся в PostgreSQL, авторизация — по JWT из `snowops-auth-service`.
 
-## Что уже реализовано
+## Возможности
 
-1. **Жизненный цикл тикета**
-   - Статусы: `PLANNED → IN_PROGRESS → COMPLETED → CLOSED`, отмена (`CANCELLED`) возможна до появления фактов.
-   - KGU создаёт/отменяет/закрывает тикет, подрядчик завершает его, водитель отмечает «В работе / Завершено» на назначении.
-2. **Назначения и рейсы**
-   - Подрядчики назначают водителей и технику (`ticket_assignment`).
-   - `TripService.Create` автоматически привязывает факт к тикету/назначению по госномеру, текущему водителю и последней GPS‑точке; при отсутствии совпадений создаётся `NO_ASSIGNMENT`.
-3. **Метрики**
-   - Списки возвращают `ticket` вместе с `metrics` (кол-во рейсов, объём, наличие нарушений).
-   - `TicketDetails` агрегирует тикет, метрики, назначения, рейсы и жалобы в одном ответе.
-4. **Нарушения**
-   - Автоматически выставляются статусы `ROUTE_VIOLATION`, `NO_AREA_WORK`, `NO_EXIT_CAMERA`, `MISMATCH_PLATE`, `SUSPICIOUS_VOLUME`, `NO_ASSIGNMENT` на основе камер и GPS.
-5. **Навигация**
-   - `/driver/navigation` отдаёт состояние техники (внутри участка/полигона/снаружи), основной маршрут и до четырёх альтернатив. Маршруты строятся имитационно (прямая линия между точками), но интерфейс соответствует ТЗ.
+- Жизненный цикл тикета: `PLANNED → IN_PROGRESS → COMPLETED → CLOSED`, отмена (`CANCELLED`) разрешена только до появления фактов (рейсов/фактического старта).
+- Гранулярный RBAC:
+  - `AKIMAT_ADMIN` — read-only по всем тикетам, рейсам и обжалованиям.
+  - `KGU_ZKH_ADMIN` — создание тикетов, отмена, закрытие, просмотр прогресса.
+  - `CONTRACTOR_ADMIN` — управление назначениями, перевод в `IN_PROGRESS`/`COMPLETED`, доступ только к своим тикетам.
+  - `DRIVER` — только собственные задания и апелляции.
+  - `TOO_ADMIN` — доступ запрещён.
+- Автоматическое обновление статусов по фактам: первый рейс или отметка водителя переводит тикет в `IN_PROGRESS`, закрытие всех рейсов + отметки водителей переводят в `COMPLETED`.
+- Trip ingestion:
+  - Привязка рейса к тикету по `ticket_assignment` (driver/vehicle). Если сопоставить нельзя, рейс сохраняется со статусом `NO_ASSIGNMENT`.
+- Контроль нарушений (`ROUTE_VIOLATION`, `FOREIGN_AREA`, `MISMATCH_PLATE`, `OVER_CAPACITY`, `NO_AREA_WORK`, `NO_ASSIGNMENT`, `SUSPICIOUS_VOLUME`, `OVER_CONTRACT_LIMIT`) и отображение бейджа `has_violations` + `violation_reason`.
+- Апелляции водителей по рейсам: подача, просмотр, комментарии, обновление статусов KGU/Акиматом.
 
-Полная поддержка контрактов, актов, бюджета и реального роутинга лежит в соседних сервисах и находится вне текущего репозитория.
-
-## Структура проекта
-
-```
-cmd/ticket-service      — точка входа
-internal/auth           — парсинг JWT
-internal/http           — роутинг и middleware (Gin)
-internal/model          — GORM модели (тикеты, рейсы, техника, геометрия и т.п.)
-internal/repository     — работа с БД
-internal/service        — бизнес-логика (тикеты, назначения, рейсы, жалобы, навигация)
-```
-
-## Основные эндпойнты
-
-| Роль        | Endpoint                                 | Описание                                                   |
-|-------------|------------------------------------------|------------------------------------------------------------|
-| KGU         | `POST /kgu/tickets`                      | Создать тикет                                              |
-|             | `PUT /kgu/tickets/:id/cancel`            | Отменить до появления фактов                               |
-|             | `PUT /kgu/tickets/:id/close`             | Закрыть после проверки                                     |
-| Подрядчики  | `PUT /contractor/tickets/:id/complete`   | Завершить тикет при выполнении условий                     |
-|             | `POST /contractor/tickets/:id/assignments` | Назначить водителя и технику                             |
-|             | `DELETE /contractor/assignments/:id`     | Удалить назначение                                         |
-| Водители    | `PUT /driver/assignments/:id/mark-in-work` / `mark-completed` | Локальные статусы водителя                    |
-|             | `GET /driver/trips`                      | Список его рейсов (в т.ч. по тикету)                       |
-|             | `GET /driver/navigation`                 | Навигационная подсказка                                    |
-| Все роли    | `GET /{role}/tickets`                    | Список доступных тикетов (+ метрики)                       |
-|             | `GET /{role}/tickets/:id`                | Карточка тикета с метриками/назначениями/рейсами/жалобами |
-
-Ответы стандартные: `{"data": ...}` или `{"error": "..."}`; коды ошибок — `400` (валидация), `401`, `403`, `404`, `409`.
-
-## Навигация (пример)
-
-`GET /driver/navigation`
-
-```json
-{
-  "data": {
-    "mode": "TO_POLYGON",
-    "vehicle_state": "INSIDE_AREA",
-    "primary_route": {
-      "label": "Primary",
-      "distance_meters": 3200,
-      "duration_seconds": 720,
-      "points": [
-        {"latitude": 51.162, "longitude": 71.467},
-        {"latitude": 51.175, "longitude": 71.495}
-      ]
-    },
-    "alternatives": [
-      {"label": "Route 2", "distance_meters": 3500, "duration_seconds": 760, "points": [...]}
-    ]
-  }
-}
-```
-
-Маршруты пока имитируются, но структура данных соответствует ТЗ.
-
-## Ингест рейсов (входные данные TripService)
-
-`TripService.Create` ожидает событие с необязательными `ticket_id`/`assignment_id` и фактами от камер/GPS. Алгоритм:
-
-1. Парсим все переданные UUID (тикет, назначение, водитель, техника, камера, полигон, события LPR/volume).
-2. Если ID нет, пытаемся найти активное назначение по водителю или технике.
-3. Если техника неизвестна, ищем по госномеру; подтягиваем дефолтного водителя, участок и полигон.
-4. При отсутствии `ticket_id` ищем активный тикет подрядчика для нужного участка.
-5. Берём последнюю GPS‑точку (`vehicle_positions`) для определения `inside_cleaning_area`/`inside_polygon`.
-6. Выставляем `TripStatus`: `NO_ASSIGNMENT`, `MISMATCH_PLATE`, `SUSPICIOUS_VOLUME`, `NO_EXIT_CAMERA`, `NO_AREA_WORK`, `ROUTE_VIOLATION` и т.д.
-7. Сохраняем `trip` и вызываем `TicketService.OnTripCreated` / `TryAutoComplete` для автоматических переходов статусов.
-
-## Разработка
-
-### Требования
+## Требования
 
 - Go 1.23+
 - PostgreSQL 15+
 
-### Запуск
+## Запуск локально
 
 ```bash
+# поднять Postgres
 cd deploy
-docker compose up -d  # поднимаем PostgreSQL и прочие зависимости
+docker compose up -d
 
+# запустить сервис
 cd ..
 APP_ENV=development \
 DB_DSN="postgres://postgres:postgres@localhost:5435/tickets_db?sslmode=disable" \
@@ -109,17 +38,131 @@ HTTP_PORT=8080 \
 go run ./cmd/ticket-service
 ```
 
-### Тесты
+## Переменные окружения
+
+| Переменная             | Описание                                                            | Значение по умолчанию                                             |
+|------------------------|---------------------------------------------------------------------|--------------------------------------------------------------------|
+| `APP_ENV`              | окружение (`development`, `production`)                             | `development`                                                     |
+| `HTTP_HOST` / `HTTP_PORT` | адрес HTTP-сервера                                              | `0.0.0.0` / `8080`                                                |
+| `DB_DSN`               | строка подключения к PostgreSQL                                     | обязательная                                                      |
+| `DB_MAX_OPEN_CONNS`    | максимум одновременных соединений                                   | `25`                                                              |
+| `DB_MAX_IDLE_CONNS`    | максимум соединений в пуле                                          | `10`                                                              |
+| `DB_CONN_MAX_LIFETIME` | TTL соединения                                                     | `1h`                                                              |
+| `JWT_ACCESS_SECRET`    | секрет для проверки JWT                                            | обязательная                                                      |
+
+## Доменные сущности
+
+- **Ticket** — участок + подрядчик + контракт + плановый период. Никаких нормативов, только фактические данные.
+- **TicketAssignment** — связь `ticket ↔ driver ↔ vehicle`, статус отметки водителя (`NOT_STARTED`, `IN_WORK`, `COMPLETED`).
+- **Trip** — факт рейса от камер (entry/exit LPR и volume события). Статусы: `OK`, `ROUTE_VIOLATION`, `FOREIGN_AREA`, `MISMATCH_PLATE`, `OVER_CAPACITY`, `NO_AREA_WORK`, `NO_ASSIGNMENT`, `SUSPICIOUS_VOLUME`, `OVER_CONTRACT_LIMIT`. Поле `violation_reason` заполняется `snowops-violations-service` для быстрого отображения причины нарушения в карточке тикета.
+- **Appeal** — апелляция водителя по рейсу (`SUBMITTED → UNDER_REVIEW → NEED_INFO → APPROVED/REJECTED → CLOSED`).
+
+## API
+
+Все маршруты (кроме `/healthz`) требуют `Authorization: Bearer <jwt>`. Ответы оборачиваются в `{"data": ...}`.
+
+### Health
+
+- `GET /healthz` — проверка работоспособности.
+
+### Акимат (`/akimat`)
+
+- `GET /akimat/tickets` — список всех тикетов с фильтрами `status`, `contractor_id`, `cleaning_area_id`, `contract_id`, `planned_start_from/to`, `planned_end_from/to`, `fact_start_from/to`, `fact_end_from/to`.
+- `GET /akimat/tickets/:id` — карточка тикета с метриками, назначениями, рейсами и обжалованиями (read-only).
+
+### KGU (`/kgu`)
+
+- `GET /kgu/tickets` — тикеты, созданные организацией KGU.
+- `POST /kgu/tickets` — создать тикет (все поля обязательны).
+  ```json
+  {
+    "cleaning_area_id": "uuid",
+    "contractor_id": "uuid",
+    "contract_id": "uuid",
+    "planned_start_at": "2025-01-01T08:00:00Z",
+    "planned_end_at": "2025-01-03T20:00:00Z",
+    "description": "ночная уборка"
+  }
+  ```
+- `GET /kgu/tickets/:id` — карточка тикета.
+- `PUT /kgu/tickets/:id/cancel` — отменить тикет (доступно только если нет рейсов и `fact_start_at = null`).
+- `PUT /kgu/tickets/:id/close` — перевести `COMPLETED → CLOSED` после проверки.
+
+### Подрядчик (`/contractor`)
+
+- `GET /contractor/tickets` — тикеты, где `ticket.contractor_id == org_id`.
+- `GET /contractor/tickets/:id` — детали тикета.
+- `PUT /contractor/tickets/:id/complete` — перевести в `COMPLETED`, если:
+  - все рейсы имеют exit события и пустой кузов на выезде;
+  - все активные назначения отмечены `COMPLETED`.
+- Управление назначениями:
+  - `POST /contractor/tickets/:id/assignments`
+    ```json
+    { "driver_id": "uuid", "vehicle_id": "uuid" }
+    ```
+  - `GET /contractor/tickets/:id/assignments`
+  - `DELETE /contractor/assignments/:id`
+  > Создавать/удалять назначения можно только в статусах `PLANNED` и `IN_PROGRESS`.
+
+### Водитель (`/driver`)
+
+- `GET /driver/tickets` — тикеты, где у водителя есть активное назначение.
+- `GET /driver/tickets/:id` — карточка тикета, фильтрована по рейсам/назначениям конкретного водителя.
+- Обновление статуса назначения:
+  - `PUT /driver/assignments/:id/mark-in-work` — установить `IN_WORK` (автоматически переведёт тикет в `IN_PROGRESS`, если это первый факт).
+  - `PUT /driver/assignments/:id/mark-completed` — установить `COMPLETED`.
+- Апелляции:
+  - `POST /driver/appeals`
+    ```json
+    {
+      "trip_id": "uuid",
+      "appeal_reason_type": "ERROR_CAMERA",
+      "comment": "номер распознан неверно"
+    }
+    ```
+  - `GET /driver/appeals?ticket_id=` — список собственных апелляций (опционально фильтр по тикету).
+  - `GET /driver/appeals/:id`
+  - `POST /driver/appeals/:id/comments` — комментарий к апелляции.
+  - `GET /driver/appeals/:id/comments`
+
+### Общие форматы
+
+- **TicketDetails (`GET /tickets/:id`)**
+  ```json
+  {
+    "data": {
+      "ticket": { "...": "..." },
+      "metrics": {
+        "total_trips": 5,
+        "total_volume_m3": 210.4,
+        "has_violations": true
+      },
+      "assignments": [ ... ],
+      "trips": [ ... ],
+      "appeals": [ ... ]
+    }
+  }
+  ```
+- Каждый объект в `trips` содержит `violation_reason`, если сервис нарушений зафиксировал и пояснил проблему.
+- **Ошибки**
+  ```json
+  { "error": "описание" }
+  ```
+  - 400 — некорректный ввод (`ErrInvalidInput`).
+  - 401 — нет/неверный токен.
+  - 403 — недостаточно прав (`ErrPermissionDenied`).
+  - 404 — ресурс не найден (`ErrNotFound`).
+  - 409 — конфликт статуса/доступа (`ErrConflict`).
+
+## Интеграция с другими сервисами
+
+- `contract_id` в тикетах обязателен; внешний `snowops-contract-service` читает `tickets` и `trips` напрямую через БД и/или REST.
+- `cleaning_area_id` и `contractor_id` должны совпадать с записями `snowops-operations-service` и `snowops-roles`.
+- Trip ingestion вызывает `TicketService.OnTripCreated` и обновляет usage; сторонние сервисы (LPR/volume) должны дергать внутренний `TripService` (gRPC/крон) или напрямую писать в БД через сервис.
+
+## Тестирование
 
 ```bash
 go test ./...
 ```
 
-## Что остаётся вне текущего репозитория
-
-- Организации, контракты, акты, бюджет, минимальные объёмы (отдельные сервисы и БД).
-- Реальные пайплайны LPR/volume/GPS (очереди, idempotency, ретраи).
-- Настоящая маршрутизация (OSRM/2GIS/Яндекс) и PostGIS‑операции.
-- Полный процесс нарушений и обжалований (приложения, комментарии, workflow).
-
-Данный сервис покрывает основную логику EPIC‑5 и может использоваться как демонстрация/референс до подключения остальных подсистем.
