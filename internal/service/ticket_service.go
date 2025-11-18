@@ -41,7 +41,7 @@ func NewTicketService(
 }
 
 func (s *TicketService) Create(ctx context.Context, principal model.Principal, input CreateTicketInput) (*model.Ticket, error) {
-	// Только KGU ZKH может создавать тикеты
+	// Only KGU ZKH can create tickets
 	if !principal.IsKgu() {
 		return nil, ErrPermissionDenied
 	}
@@ -125,9 +125,14 @@ func (s *TicketService) Get(ctx context.Context, principal model.Principal, id s
 	return ticket, nil
 }
 
-func (s *TicketService) List(ctx context.Context, principal model.Principal, filter repository.TicketListFilter) ([]model.Ticket, error) {
+type TicketListItem struct {
+	Ticket  model.Ticket             `json:"ticket"`
+	Metrics repository.TicketMetrics `json:"metrics"`
+}
+
+func (s *TicketService) List(ctx context.Context, principal model.Principal, filter repository.TicketListFilter) ([]TicketListItem, error) {
 	if principal.IsAkimat() {
-		// Акимат видит все
+		// Akimat has access to every ticket
 	} else if principal.IsKgu() {
 		orgID := principal.OrgID.String()
 		filter.CreatedByOrgID = &orgID
@@ -144,11 +149,42 @@ func (s *TicketService) List(ctx context.Context, principal model.Principal, fil
 		return nil, ErrPermissionDenied
 	}
 
-	return s.ticketRepo.List(ctx, filter)
+	tickets, err := s.ticketRepo.List(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(tickets) == 0 {
+		return []TicketListItem{}, nil
+	}
+
+	ids := make([]uuid.UUID, 0, len(tickets))
+	for _, t := range tickets {
+		ids = append(ids, t.ID)
+	}
+
+	metricsMap, err := s.ticketRepo.GetMetricsForTickets(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]TicketListItem, 0, len(tickets))
+	for _, t := range tickets {
+		metrics := repository.TicketMetrics{}
+		if m, ok := metricsMap[t.ID]; ok && m != nil {
+			metrics = *m
+		}
+		items = append(items, TicketListItem{
+			Ticket:  t,
+			Metrics: metrics,
+		})
+	}
+
+	return items, nil
 }
 
 func (s *TicketService) Cancel(ctx context.Context, principal model.Principal, id string) error {
-	// Только KGU ZKH может отменять тикеты
+	// Only KGU ZKH can cancel tickets
 	if !principal.IsKgu() {
 		return ErrPermissionDenied
 	}
@@ -165,12 +201,12 @@ func (s *TicketService) Cancel(ctx context.Context, principal model.Principal, i
 		return ErrPermissionDenied
 	}
 
-	// Можно отменить только если нет фактов (нет рейсов и fact_start_at пустой)
+	// Cancellation is allowed only if there are no facts yet (no trips, no fact_start_at)
 	if ticket.FactStartAt != nil {
 		return ErrConflict
 	}
 
-	// Проверяем, есть ли рейсы
+	// Check whether any trips exist
 	tripCount, err := s.ticketRepo.CountTripsByTicketID(ctx, ticket.ID)
 	if err != nil {
 		return err
@@ -185,7 +221,7 @@ func (s *TicketService) Cancel(ctx context.Context, principal model.Principal, i
 }
 
 func (s *TicketService) Close(ctx context.Context, principal model.Principal, id string) error {
-	// KGU ZKH может закрывать тикеты после проверки
+	// KGU ZKH can close tickets after validation
 	if !principal.IsKgu() {
 		return ErrPermissionDenied
 	}
@@ -202,7 +238,7 @@ func (s *TicketService) Close(ctx context.Context, principal model.Principal, id
 		return ErrPermissionDenied
 	}
 
-	// Можно закрыть только если тикет в статусе COMPLETED
+	// Closing is allowed only for tickets in COMPLETED status
 	if ticket.Status != model.TicketStatusCompleted {
 		return ErrConflict
 	}
@@ -212,7 +248,7 @@ func (s *TicketService) Close(ctx context.Context, principal model.Principal, id
 }
 
 func (s *TicketService) Complete(ctx context.Context, principal model.Principal, id string) error {
-	// Подрядчик может завершить тикет
+	// Contractors can request completion
 	if !principal.IsContractor() {
 		return ErrPermissionDenied
 	}
@@ -229,7 +265,14 @@ func (s *TicketService) Complete(ctx context.Context, principal model.Principal,
 		return ErrPermissionDenied
 	}
 
-	// Проверяем, что все рейсы закрыты (есть exit события и кузов пустой)
+	if ticket.Status != model.TicketStatusInProgress {
+		if ticket.Status == model.TicketStatusCompleted {
+			return nil
+		}
+		return ErrConflict
+	}
+
+	// Ensure every trip is closed (exit events present and truck empty on exit)
 	incompleteTrips, err := s.ticketRepo.CountIncompleteTripsByTicketID(ctx, ticket.ID)
 	if err != nil {
 		return err
@@ -239,13 +282,21 @@ func (s *TicketService) Complete(ctx context.Context, principal model.Principal,
 		return ErrConflict
 	}
 
-	// Проверяем, что все водители отметили "Завершено"
+	// Ensure each driver marked the assignment as completed
 	incompleteAssignments, err := s.ticketRepo.CountIncompleteAssignmentsByTicketID(ctx, ticket.ID)
 	if err != nil {
 		return err
 	}
 
 	if incompleteAssignments > 0 {
+		return ErrConflict
+	}
+
+	invalidExitVolumeTrips, err := s.ticketRepo.CountTripsWithInvalidExitVolume(ctx, ticket.ID, exitVolumeTolerance)
+	if err != nil {
+		return err
+	}
+	if invalidExitVolumeTrips > 0 {
 		return ErrConflict
 	}
 
@@ -257,7 +308,7 @@ func (s *TicketService) Complete(ctx context.Context, principal model.Principal,
 	return s.ticketRepo.Update(ctx, ticket)
 }
 
-// TicketDetails содержит полную информацию о тикете
+// TicketDetails aggregates everything shown in the ticket card
 type TicketDetails struct {
 	Ticket      *model.Ticket             `json:"ticket"`
 	Metrics     *repository.TicketMetrics `json:"metrics"`
@@ -283,19 +334,19 @@ func (s *TicketService) GetDetails(ctx context.Context, principal model.Principa
 		return nil, ErrPermissionDenied
 	}
 
-	// Получаем метрики
+	// Load aggregated metrics
 	metrics, err := s.ticketRepo.GetTicketMetrics(ctx, ticket.ID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Получаем назначения
+	// Load assignments
 	assignments, err := s.ticketRepo.GetAssignmentsByTicketID(ctx, ticket.ID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Фильтруем назначения для водителя
+	// Narrow assignments down to the current driver
 	if principal.IsDriver() && principal.DriverID != nil {
 		var filteredAssignments []model.TicketAssignment
 		for _, a := range assignments {
@@ -306,13 +357,13 @@ func (s *TicketService) GetDetails(ctx context.Context, principal model.Principa
 		assignments = filteredAssignments
 	}
 
-	// Получаем рейсы
+	// Load trips
 	trips, err := s.ticketRepo.GetTripsByTicketID(ctx, ticket.ID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Фильтруем рейсы для водителя
+	// Driver sees only his trips
 	if principal.IsDriver() && principal.DriverID != nil {
 		var filteredTrips []model.Trip
 		for _, t := range trips {
@@ -323,13 +374,13 @@ func (s *TicketService) GetDetails(ctx context.Context, principal model.Principa
 		trips = filteredTrips
 	}
 
-	// Получаем обжалования
+	// Load appeals
 	appeals, err := s.ticketRepo.GetAppealsByTicketID(ctx, ticket.ID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Фильтруем обжалования для водителя
+	// Drivers see only their own appeals
 	if principal.IsDriver() && principal.DriverID != nil {
 		var filteredAppeals []model.Appeal
 		for _, a := range appeals {
@@ -349,16 +400,16 @@ func (s *TicketService) GetDetails(ctx context.Context, principal model.Principa
 	}, nil
 }
 
-// OnTripCreated вызывается при создании нового рейса для автоматического перехода статусов
+// OnTripCreated translates ticket statuses based on new trips
 func (s *TicketService) OnTripCreated(ctx context.Context, ticketID uuid.UUID) error {
 	ticket, err := s.ticketRepo.GetByID(ctx, ticketID.String())
 	if err != nil {
 		return err
 	}
 
-	// Если тикет в статусе PLANNED и это первый рейс, переводим в IN_PROGRESS
+	// First trip automatically moves PLANNED ticket to IN_PROGRESS
 	if ticket.Status == model.TicketStatusPlanned && ticket.FactStartAt == nil {
-		// Проверяем, это ли первый рейс
+		// Ensure this is the earliest trip
 		firstTrip, err := s.tripRepo.GetFirstTripByTicketID(ctx, ticketID)
 		if err != nil {
 			return err
@@ -375,7 +426,7 @@ func (s *TicketService) OnTripCreated(ctx context.Context, ticketID uuid.UUID) e
 	return nil
 }
 
-// TryAutoComplete переводит тикет в COMPLETED, если выполнены все условия
+// TryAutoComplete moves ticket to COMPLETED when all conditions are met
 func (s *TicketService) TryAutoComplete(ctx context.Context, ticketID uuid.UUID) error {
 	ticket, err := s.ticketRepo.GetByID(ctx, ticketID.String())
 	if err != nil {
@@ -399,6 +450,14 @@ func (s *TicketService) TryAutoComplete(ctx context.Context, ticketID uuid.UUID)
 		return err
 	}
 	if incompleteAssignments > 0 {
+		return nil
+	}
+
+	invalidExitVolumeTrips, err := s.ticketRepo.CountTripsWithInvalidExitVolume(ctx, ticket.ID, exitVolumeTolerance)
+	if err != nil {
+		return err
+	}
+	if invalidExitVolumeTrips > 0 {
 		return nil
 	}
 
@@ -428,6 +487,6 @@ func (s *TicketService) canAccessTicket(ctx context.Context, principal model.Pri
 		}
 		return has, nil
 	}
-	// Драйвер без assignment и другие роли — нет доступа
+	// Users without an active assignment cannot access the ticket
 	return false, nil
 }
