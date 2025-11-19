@@ -72,3 +72,19 @@ func (r *TripRepository) GetFirstTripByTicketID(ctx context.Context, ticketID uu
 	return &trip, nil
 }
 
+func (r *TripRepository) FindOpenTripsByVehicleAndPolygon(ctx context.Context, vehicleID *uuid.UUID, polygonID *uuid.UUID) ([]model.Trip, error) {
+	var trips []model.Trip
+	query := r.db.WithContext(ctx).
+		Where("exit_at IS NULL")
+
+	if vehicleID != nil {
+		query = query.Where("vehicle_id = ?", *vehicleID)
+	}
+	if polygonID != nil {
+		query = query.Where("polygon_id = ?", *polygonID)
+	}
+
+	err := query.Order("entry_at DESC").Find(&trips).Error
+	return trips, err
+}
+

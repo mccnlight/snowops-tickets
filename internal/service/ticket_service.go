@@ -64,12 +64,13 @@ func (s *TicketService) Create(ctx context.Context, principal model.Principal, i
 		return nil, ErrInvalidInput
 	}
 
-	plannedStartAt, err := time.Parse(time.RFC3339, input.PlannedStartAt)
+	// Парсим дату, поддерживая разные форматы
+	plannedStartAt, err := parseTimeFlexible(input.PlannedStartAt)
 	if err != nil {
 		return nil, ErrInvalidInput
 	}
 
-	plannedEndAt, err := time.Parse(time.RFC3339, input.PlannedEndAt)
+	plannedEndAt, err := parseTimeFlexible(input.PlannedEndAt)
 	if err != nil {
 		return nil, ErrInvalidInput
 	}
@@ -90,6 +91,86 @@ func (s *TicketService) Create(ctx context.Context, principal model.Principal, i
 	}
 
 	if err := s.ticketRepo.Create(ctx, ticket); err != nil {
+		return nil, err
+	}
+
+	return ticket, nil
+}
+
+type UpdateTicketInput struct {
+	TicketID       string
+	CleaningAreaID *string
+	PlannedStartAt *string
+	PlannedEndAt   *string
+	Description    *string
+}
+
+func (s *TicketService) Update(ctx context.Context, principal model.Principal, input UpdateTicketInput) (*model.Ticket, error) {
+	// Только KGU ZKH может редактировать тикеты
+	if !principal.IsKgu() {
+		return nil, ErrPermissionDenied
+	}
+
+	ticket, err := s.ticketRepo.GetByID(ctx, input.TicketID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+
+	if ticket.CreatedByOrgID != principal.OrgID {
+		return nil, ErrPermissionDenied
+	}
+
+	// Можно редактировать только если нет фактов (нет рейсов и fact_start_at пустой)
+	if ticket.FactStartAt != nil {
+		return nil, ErrConflict
+	}
+
+	tripCount, err := s.ticketRepo.CountTripsByTicketID(ctx, ticket.ID)
+	if err != nil {
+		return nil, err
+	}
+	if tripCount > 0 {
+		return nil, ErrConflict
+	}
+
+	// Обновляем поля
+	if input.CleaningAreaID != nil {
+		cleaningAreaID, err := uuid.Parse(*input.CleaningAreaID)
+		if err != nil {
+			return nil, ErrInvalidInput
+		}
+		ticket.CleaningAreaID = cleaningAreaID
+	}
+
+	if input.PlannedStartAt != nil {
+		plannedStartAt, err := parseTimeFlexible(*input.PlannedStartAt)
+		if err != nil {
+			return nil, ErrInvalidInput
+		}
+		ticket.PlannedStartAt = plannedStartAt
+	}
+
+	if input.PlannedEndAt != nil {
+		plannedEndAt, err := parseTimeFlexible(*input.PlannedEndAt)
+		if err != nil {
+			return nil, ErrInvalidInput
+		}
+		ticket.PlannedEndAt = plannedEndAt
+	}
+
+	if input.Description != nil {
+		ticket.Description = *input.Description
+	}
+
+	// Проверяем, что период валиден
+	if ticket.PlannedEndAt.Before(ticket.PlannedStartAt) || ticket.PlannedEndAt.Equal(ticket.PlannedStartAt) {
+		return nil, ErrInvalidInput
+	}
+
+	if err := s.ticketRepo.Update(ctx, ticket); err != nil {
 		return nil, err
 	}
 
@@ -145,6 +226,14 @@ func (s *TicketService) List(ctx context.Context, principal model.Principal, fil
 	}
 
 	return s.ticketRepo.List(ctx, filter)
+}
+
+func (s *TicketService) GetMetrics(ctx context.Context, ticketID string) (*repository.TicketMetrics, error) {
+	id, err := uuid.Parse(ticketID)
+	if err != nil {
+		return nil, ErrInvalidInput
+	}
+	return s.ticketRepo.GetTicketMetrics(ctx, id)
 }
 
 func (s *TicketService) Cancel(ctx context.Context, principal model.Principal, id string) error {
@@ -430,4 +519,31 @@ func (s *TicketService) canAccessTicket(ctx context.Context, principal model.Pri
 	}
 	// Драйвер без assignment и другие роли — нет доступа
 	return false, nil
+}
+
+// parseTimeFlexible парсит время, поддерживая разные форматы:
+// - RFC3339: "2006-01-02T15:04:05Z07:00"
+// - ISO 8601 без часового пояса: "2006-01-02T15:04:05.000" или "2006-01-02T15:04:05"
+func parseTimeFlexible(timeStr string) (time.Time, error) {
+	// Пробуем RFC3339 (с часовым поясом)
+	if t, err := time.Parse(time.RFC3339, timeStr); err == nil {
+		return t, nil
+	}
+
+	// Пробуем ISO 8601 с миллисекундами без часового пояса
+	if t, err := time.Parse("2006-01-02T15:04:05.000", timeStr); err == nil {
+		return t, nil
+	}
+
+	// Пробуем ISO 8601 без миллисекунд и часового пояса
+	if t, err := time.Parse("2006-01-02T15:04:05", timeStr); err == nil {
+		return t, nil
+	}
+
+	// Пробуем только дату
+	if t, err := time.Parse("2006-01-02", timeStr); err == nil {
+		return t, nil
+	}
+
+	return time.Time{}, errors.New("invalid time format")
 }

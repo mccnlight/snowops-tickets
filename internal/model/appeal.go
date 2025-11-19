@@ -18,6 +18,15 @@ const (
 	AppealStatusClosed      AppealStatus = "CLOSED"
 )
 
+type AppealReasonType string
+
+const (
+	AppealReasonTypeCameraError      AppealReasonType = "ERROR_CAMERA"
+	AppealReasonTypeTransit          AppealReasonType = "TRANSIT"
+	AppealReasonTypeOtherAssignment  AppealReasonType = "OTHER_ASSIGNMENT"
+	AppealReasonTypeOther            AppealReasonType = "OTHER"
+)
+
 type Appeal struct {
 	ID              uuid.UUID    `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()" json:"id"`
 	TripID          *uuid.UUID   `gorm:"type:uuid;index" json:"trip_id"`

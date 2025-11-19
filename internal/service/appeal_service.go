@@ -44,6 +44,17 @@ func (s *AppealService) Create(ctx context.Context, principal model.Principal, i
 		return nil, ErrPermissionDenied
 	}
 
+	// Валидация типа основания
+	validReasonTypes := map[string]bool{
+		string(model.AppealReasonTypeCameraError):     true,
+		string(model.AppealReasonTypeTransit):         true,
+		string(model.AppealReasonTypeOtherAssignment): true,
+		string(model.AppealReasonTypeOther):           true,
+	}
+	if !validReasonTypes[input.AppealReasonType] {
+		return nil, ErrInvalidInput
+	}
+
 	tripID, err := uuid.Parse(input.TripID)
 	if err != nil {
 		return nil, ErrInvalidInput
@@ -72,13 +83,14 @@ func (s *AppealService) Create(ctx context.Context, principal model.Principal, i
 		ticketID = trip.TicketID
 	}
 
+	appealReasonType := input.AppealReasonType
 	appeal := &model.Appeal{
 		TripID:           &tripID,
 		TicketID:         ticketID,
 		CreatedByUserID:  principal.UserID,
 		Status:           model.AppealStatusSubmitted,
 		Reason:           string(trip.Status), // Нарушение из статуса рейса
-		AppealReasonType: &input.AppealReasonType,
+		AppealReasonType: &appealReasonType,
 		Comment:          input.Comment,
 	}
 

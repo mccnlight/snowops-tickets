@@ -47,8 +47,14 @@ func (r *TicketRepository) CountTripsByTicketID(ctx context.Context, ticketID uu
 
 func (r *TicketRepository) CountIncompleteTripsByTicketID(ctx context.Context, ticketID uuid.UUID) (int64, error) {
 	var count int64
+	// Рейс считается незавершенным, если:
+	// 1. Нет polygon_exit_time (не закрыт ни по камере, ни по GPS)
+	// 2. ИЛИ есть exit_volume_event, но объём на выезде не в допустимом коридоре (не ≈ 0)
 	err := r.db.WithContext(ctx).Model(&model.Trip{}).
-		Where("ticket_id = ? AND (exit_at IS NULL OR exit_lpr_event_id IS NULL OR exit_volume_event_id IS NULL)", ticketID).
+		Where(`ticket_id = ? AND (
+			polygon_exit_time IS NULL 
+			OR (exit_volume_event_id IS NOT NULL AND (detected_volume_exit IS NULL OR detected_volume_exit > 0.1))
+		)`, ticketID).
 		Count(&count).Error
 	return count, err
 }

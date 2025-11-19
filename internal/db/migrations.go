@@ -31,7 +31,8 @@ var migrationStatements = []string{
 				'NO_AREA_WORK',
 				'NO_ASSIGNMENT',
 				'SUSPICIOUS_VOLUME',
-				'OVER_CONTRACT_LIMIT'
+				'OVER_CONTRACT_LIMIT',
+				'NO_EXIT_CAMERA'
 			);
 		ELSE
 			-- Если тип уже существует, но имеет неправильные значения, пересоздаем его
@@ -52,7 +53,8 @@ var migrationStatements = []string{
 							'NO_AREA_WORK',
 							'NO_ASSIGNMENT',
 							'SUSPICIOUS_VOLUME',
-							'OVER_CONTRACT_LIMIT'
+							'OVER_CONTRACT_LIMIT',
+							'NO_EXIT_CAMERA'
 						);
 						-- Таблица trips будет пересоздана позже в миграции
 					ELSE
@@ -83,6 +85,9 @@ var migrationStatements = []string{
 					END IF;
 					IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'OVER_CONTRACT_LIMIT' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'trip_status')) THEN
 						ALTER TYPE trip_status ADD VALUE 'OVER_CONTRACT_LIMIT';
+					END IF;
+					IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'NO_EXIT_CAMERA' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'trip_status')) THEN
+						ALTER TYPE trip_status ADD VALUE 'NO_EXIT_CAMERA';
 					END IF;
 				END IF;
 			END IF;
@@ -217,6 +222,8 @@ var migrationStatements = []string{
 		detected_volume_exit DOUBLE PRECISION,
 		entry_at TIMESTAMPTZ NOT NULL,
 		exit_at TIMESTAMPTZ,
+		polygon_entry_time TIMESTAMPTZ,
+		polygon_exit_time TIMESTAMPTZ,
 		status trip_status NOT NULL DEFAULT 'OK',
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -247,6 +254,18 @@ var migrationStatements = []string{
 		IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
 			WHERE table_name = 'trips' AND column_name = 'exit_volume_event_id') THEN
 			ALTER TABLE trips ADD COLUMN exit_volume_event_id UUID;
+		END IF;
+		IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+			WHERE table_name = 'trips' AND column_name = 'polygon_entry_time') THEN
+			ALTER TABLE trips ADD COLUMN polygon_entry_time TIMESTAMPTZ;
+		END IF;
+		IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+			WHERE table_name = 'trips' AND column_name = 'polygon_exit_time') THEN
+			ALTER TABLE trips ADD COLUMN polygon_exit_time TIMESTAMPTZ;
+		END IF;
+		IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+			WHERE table_name = 'trips' AND column_name = 'violation_reason') THEN
+			ALTER TABLE trips ADD COLUMN violation_reason TEXT;
 		END IF;
 	END
 	$$;`,

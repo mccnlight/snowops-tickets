@@ -15,10 +15,11 @@ const (
 	TripStatusForeignArea       TripStatus = "FOREIGN_AREA"
 	TripStatusMismatchPlate     TripStatus = "MISMATCH_PLATE"
 	TripStatusOverCapacity      TripStatus = "OVER_CAPACITY"
-	TripStatusNoAreaWork        TripStatus = "NO_AREA_WORK"
+	TripStatusNoAreaWork         TripStatus = "NO_AREA_WORK"
 	TripStatusNoAssignment      TripStatus = "NO_ASSIGNMENT"
 	TripStatusSuspiciousVolume  TripStatus = "SUSPICIOUS_VOLUME"
 	TripStatusOverContractLimit TripStatus = "OVER_CONTRACT_LIMIT"
+	TripStatusNoExitCamera      TripStatus = "NO_EXIT_CAMERA"
 )
 
 type Trip struct {
@@ -39,6 +40,8 @@ type Trip struct {
 	DetectedVolumeExit  *float64   `json:"detected_volume_exit"`
 	EntryAt             time.Time  `gorm:"not null" json:"entry_at"`
 	ExitAt              *time.Time `json:"exit_at"`
+	PolygonEntryTime    *time.Time `gorm:"column:polygon_entry_time" json:"polygon_entry_time"`
+	PolygonExitTime     *time.Time `gorm:"column:polygon_exit_time" json:"polygon_exit_time"`
 	Status              TripStatus `gorm:"type:trip_status;not null;default:OK" json:"status"`
 	ViolationReason     *string    `gorm:"column:violation_reason" json:"violation_reason,omitempty"`
 	CreatedAt           time.Time  `gorm:"autoCreateTime" json:"created_at"`

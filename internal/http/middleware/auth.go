@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"ticket-service/internal/auth"
 	"ticket-service/internal/model"
@@ -37,11 +38,19 @@ func Auth(parser *auth.Parser) gin.HandlerFunc {
 			return
 		}
 
+		var driverID *uuid.UUID
+		if claims.DriverID != nil {
+			driverID = claims.DriverID
+		} else if claims.Role == model.UserRoleDriver {
+			id := claims.UserID
+			driverID = &id
+		}
+
 		principal := model.Principal{
 			UserID:   claims.UserID,
 			OrgID:    claims.OrgID,
 			Role:     claims.Role,
-			DriverID: claims.DriverID,
+			DriverID: driverID,
 		}
 
 		c.Set(claimsContextKey, claims)
@@ -63,4 +72,3 @@ func MustPrincipal(c *gin.Context) (model.Principal, bool) {
 
 	return principal, true
 }
-

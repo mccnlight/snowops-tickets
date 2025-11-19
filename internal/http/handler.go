@@ -53,6 +53,7 @@ func (h *Handler) Register(r *gin.Engine, authMiddleware gin.HandlerFunc) {
 	{
 		kgu.GET("/tickets", h.listTickets)
 		kgu.POST("/tickets", h.createTicket)
+		kgu.PUT("/tickets/:id", h.updateTicket)
 		kgu.GET("/tickets/:id", h.getTicketDetails)
 		kgu.PUT("/tickets/:id/cancel", h.cancelTicket)
 		kgu.PUT("/tickets/:id/close", h.closeTicket)
@@ -73,6 +74,7 @@ func (h *Handler) Register(r *gin.Engine, authMiddleware gin.HandlerFunc) {
 	{
 		driver.GET("/tickets", h.listTickets)
 		driver.GET("/tickets/:id", h.getTicketDetails)
+		driver.GET("/tickets/:id/trips", h.listMyTripsByTicket)
 		// Обновление статуса водителя
 		driver.PUT("/assignments/:id/mark-in-work", h.markAssignmentInWork)
 		driver.PUT("/assignments/:id/mark-completed", h.markAssignmentCompleted)
@@ -82,6 +84,14 @@ func (h *Handler) Register(r *gin.Engine, authMiddleware gin.HandlerFunc) {
 		driver.GET("/appeals/:id", h.getAppeal)
 		driver.POST("/appeals/:id/comments", h.addAppealComment)
 		driver.GET("/appeals/:id/comments", h.getAppealComments)
+	}
+
+	// Публичные эндпоинты для интеграции с другими сервисами
+	public := r.Group("/api/v1")
+	{
+		public.POST("/camera-events", h.processCameraEvent)
+		public.PUT("/trips/:id/exit", h.updateTripExit)
+		public.PUT("/trips/:id/complete-gps", h.completeTripByGPS)
 	}
 }
 
@@ -220,7 +230,26 @@ func (h *Handler) listTickets(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, successResponse(tickets))
+	// Добавляем метрики для каждого тикета
+	type TicketWithMetrics struct {
+		model.Ticket
+		Metrics *repository.TicketMetrics `json:"metrics"`
+	}
+
+	result := make([]TicketWithMetrics, 0, len(tickets))
+	for _, ticket := range tickets {
+		metrics, err := h.ticketService.GetMetrics(c.Request.Context(), ticket.ID.String())
+		if err != nil {
+			// Если не удалось получить метрики, используем пустые
+			metrics = &repository.TicketMetrics{}
+		}
+		result = append(result, TicketWithMetrics{
+			Ticket:  ticket,
+			Metrics: metrics,
+		})
+	}
+
+	c.JSON(http.StatusOK, successResponse(result))
 }
 
 func (h *Handler) cancelTicket(c *gin.Context) {
@@ -534,6 +563,183 @@ func (h *Handler) getAppealComments(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, successResponse(comments))
+}
+
+func (h *Handler) updateTicket(c *gin.Context) {
+	principal, ok := middleware.MustPrincipal(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, errorResponse("missing principal"))
+		return
+	}
+
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		c.JSON(http.StatusBadRequest, errorResponse("invalid ticket id"))
+		return
+	}
+
+	var req struct {
+		CleaningAreaID *string `json:"cleaning_area_id"`
+		PlannedStartAt *string `json:"planned_start_at"`
+		PlannedEndAt   *string `json:"planned_end_at"`
+		Description    *string `json:"description"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse(err.Error()))
+		return
+	}
+
+	input := service.UpdateTicketInput{
+		TicketID: id,
+	}
+	if req.CleaningAreaID != nil {
+		input.CleaningAreaID = req.CleaningAreaID
+	}
+	if req.PlannedStartAt != nil {
+		input.PlannedStartAt = req.PlannedStartAt
+	}
+	if req.PlannedEndAt != nil {
+		input.PlannedEndAt = req.PlannedEndAt
+	}
+	if req.Description != nil {
+		input.Description = req.Description
+	}
+
+	ticket, err := h.ticketService.Update(c.Request.Context(), principal, input)
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, successResponse(ticket))
+}
+
+func (h *Handler) listMyTripsByTicket(c *gin.Context) {
+	principal, ok := middleware.MustPrincipal(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, errorResponse("missing principal"))
+		return
+	}
+
+	ticketID := strings.TrimSpace(c.Param("id"))
+	if ticketID == "" {
+		c.JSON(http.StatusBadRequest, errorResponse("invalid ticket id"))
+		return
+	}
+
+	trips, err := h.tripService.ListByTicketID(c.Request.Context(), principal, ticketID)
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, successResponse(trips))
+}
+
+func (h *Handler) processCameraEvent(c *gin.Context) {
+	var req struct {
+		EventType      string   `json:"event_type" binding:"required"`
+		EventID        string   `json:"event_id" binding:"required"`
+		CameraID       string   `json:"camera_id" binding:"required"`
+		PolygonID      *string  `json:"polygon_id"`
+		PlateNumber    *string  `json:"plate_number"`
+		DetectedVolume *float64 `json:"detected_volume"`
+		DetectedAt     string   `json:"detected_at" binding:"required"`
+		Direction      *string  `json:"direction"`
+		PhotoURL       *string  `json:"photo_url"`
+		Confidence     *float64 `json:"confidence"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse(err.Error()))
+		return
+	}
+
+	trip, err := h.tripService.ProcessCameraEvent(c.Request.Context(), service.ProcessCameraEventInput{
+		EventType:      req.EventType,
+		EventID:        req.EventID,
+		CameraID:       req.CameraID,
+		PolygonID:      req.PolygonID,
+		PlateNumber:    req.PlateNumber,
+		DetectedVolume: req.DetectedVolume,
+		DetectedAt:     req.DetectedAt,
+		Direction:      req.Direction,
+		PhotoURL:       req.PhotoURL,
+		Confidence:     req.Confidence,
+	})
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, successResponse(trip))
+}
+
+func (h *Handler) updateTripExit(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		c.JSON(http.StatusBadRequest, errorResponse("invalid trip id"))
+		return
+	}
+
+	var req struct {
+		ExitLprEventID    *string  `json:"exit_lpr_event_id"`
+		ExitVolumeEventID *string  `json:"exit_volume_event_id"`
+		DetectedVolumeExit *float64 `json:"detected_volume_exit"`
+		PolygonExitTime   *string  `json:"polygon_exit_time"`
+		ExitAt            *string  `json:"exit_at"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse(err.Error()))
+		return
+	}
+
+	trip, err := h.tripService.UpdateTripExit(c.Request.Context(), service.UpdateTripExitInput{
+		TripID:            id,
+		ExitLprEventID:    req.ExitLprEventID,
+		ExitVolumeEventID: req.ExitVolumeEventID,
+		DetectedVolumeExit: req.DetectedVolumeExit,
+		PolygonExitTime:   req.PolygonExitTime,
+		ExitAt:            req.ExitAt,
+	})
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, successResponse(trip))
+}
+
+func (h *Handler) completeTripByGPS(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		c.JSON(http.StatusBadRequest, errorResponse("invalid trip id"))
+		return
+	}
+
+	var req struct {
+		PolygonExitTime string `json:"polygon_exit_time" binding:"required"`
+		ExitAt          string `json:"exit_at" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse(err.Error()))
+		return
+	}
+
+	trip, err := h.tripService.CompleteTripByGPS(c.Request.Context(), service.CompleteTripByGPSInput{
+		TripID:          id,
+		PolygonExitTime: req.PolygonExitTime,
+		ExitAt:          req.ExitAt,
+	})
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, successResponse(trip))
 }
 
 func (h *Handler) handleError(c *gin.Context, err error) {
