@@ -4,8 +4,10 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 
 	"ticket-service/internal/http/middleware"
@@ -82,6 +84,12 @@ func (h *Handler) Register(r *gin.Engine, authMiddleware gin.HandlerFunc) {
 		driver.GET("/appeals/:id", h.getAppeal)
 		driver.POST("/appeals/:id/comments", h.addAppealComment)
 		driver.GET("/appeals/:id/comments", h.getAppealComments)
+	}
+
+	// LANDFILL - журнал приёма снега
+	landfill := protected.Group("/landfill")
+	{
+		landfill.GET("/reception-journal", h.getReceptionJournal)
 	}
 }
 
@@ -562,4 +570,87 @@ func errorResponse(message string) gin.H {
 	return gin.H{
 		"error": message,
 	}
+}
+
+func (h *Handler) getReceptionJournal(c *gin.Context) {
+	principal, ok := middleware.MustPrincipal(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, errorResponse("missing principal"))
+		return
+	}
+
+	// Парсинг polygon_ids из query параметра (может быть несколько)
+	var polygonIDs []uuid.UUID
+	if raw := c.Query("polygon_ids"); raw != "" {
+		ids := strings.Split(raw, ",")
+		for _, idStr := range ids {
+			id, err := uuid.Parse(strings.TrimSpace(idStr))
+			if err == nil {
+				polygonIDs = append(polygonIDs, id)
+			}
+		}
+	}
+
+	// Парсинг дат
+	var dateFrom *time.Time
+	if raw := c.Query("date_from"); raw != "" {
+		t, err := parseTime(raw)
+		if err == nil {
+			dateFrom = &t
+		}
+	}
+
+	var dateTo *time.Time
+	if raw := c.Query("date_to"); raw != "" {
+		t, err := parseTime(raw)
+		if err == nil {
+			dateTo = &t
+		}
+	}
+
+	// Парсинг contractor_id
+	var contractorID *uuid.UUID
+	if raw := c.Query("contractor_id"); raw != "" {
+		id, err := uuid.Parse(strings.TrimSpace(raw))
+		if err == nil {
+			contractorID = &id
+		}
+	}
+
+	// Парсинг status
+	var status *model.TripStatus
+	if raw := c.Query("status"); raw != "" {
+		s := model.TripStatus(strings.ToUpper(strings.TrimSpace(raw)))
+		status = &s
+	}
+
+	result, err := h.tripService.GetReceptionJournal(c.Request.Context(), principal, service.ReceptionJournalInput{
+		PolygonIDs:   polygonIDs,
+		DateFrom:     dateFrom,
+		DateTo:       dateTo,
+		ContractorID: contractorID,
+		Status:       status,
+	})
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, successResponse(result))
+}
+
+func parseTime(raw string) (time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	layouts := []string{
+		time.RFC3339,
+		"2006-01-02",
+		"2006-01-02T15:04:05",
+		"2006-01-02T15:04:05Z",
+	}
+	for _, layout := range layouts {
+		if parsed, err := time.Parse(layout, raw); err == nil {
+			return parsed, nil
+		}
+	}
+	return time.Time{}, errors.New("invalid time format")
 }

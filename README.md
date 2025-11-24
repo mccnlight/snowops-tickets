@@ -10,7 +10,8 @@
   - `KGU_ZKH_ADMIN` — создание тикетов, отмена, закрытие, просмотр прогресса.
   - `CONTRACTOR_ADMIN` — управление назначениями, перевод в `IN_PROGRESS`/`COMPLETED`, доступ только к своим тикетам.
   - `DRIVER` — только собственные задания и апелляции.
-  - `TOO_ADMIN` — доступ запрещён.
+  - `LANDFILL_ADMIN`, `LANDFILL_USER` — доступ к журналу приёма снега (`/landfill/reception-journal`).
+  - `TOO_ADMIN` — доступ запрещён (deprecated, используйте LANDFILL_ADMIN).
 - Автоматическое обновление статусов по фактам: первый рейс или отметка водителя переводит тикет в `IN_PROGRESS`, закрытие всех рейсов + отметки водителей переводят в `COMPLETED`.
 - Trip ingestion:
   - Привязка рейса к тикету по `ticket_assignment` (driver/vehicle). Если сопоставить нельзя, рейс сохраняется со статусом `NO_ASSIGNMENT`.
@@ -124,6 +125,48 @@ go run ./cmd/ticket-service
   - `GET /driver/appeals/:id`
   - `POST /driver/appeals/:id/comments` — комментарий к апелляции.
   - `GET /driver/appeals/:id/comments`
+
+### LANDFILL (`/landfill`)
+
+- `GET /landfill/reception-journal` — журнал приёма снега (все заезды на полигоны LANDFILL организации).
+
+  **Query параметры:**
+  - `polygon_ids` (опционально) — список UUID полигонов через запятую
+  - `date_from` (опционально) — начало периода (RFC3339 или YYYY-MM-DD)
+  - `date_to` (опционально) — конец периода (RFC3339 или YYYY-MM-DD)
+  - `contractor_id` (опционально) — UUID подрядчика для фильтрации
+  - `status` (опционально) — статус рейса: `OK`, `ROUTE_VIOLATION`, `FOREIGN_AREA`, и т.д.
+
+  **Доступ:** только `LANDFILL_ADMIN`, `LANDFILL_USER`
+
+  **Ответ:**
+  ```json
+  {
+    "data": {
+      "trips": [
+        {
+          "trip_id": "uuid",
+          "entry_at": "2025-01-15T10:30:00Z",
+          "exit_at": "2025-01-15T10:45:00Z",
+          "polygon_id": "uuid",
+          "polygon_name": "Полигон №1",
+          "vehicle_plate_number": "KZ 123 ABC",
+          "detected_plate_number": "KZ 123 ABC",
+          "contractor_id": "uuid",
+          "contractor_name": "TOO Snow Demo",
+          "detected_volume_entry": 42.5,
+          "detected_volume_exit": 2.1,
+          "net_volume_m3": 40.4,
+          "status": "OK"
+        }
+      ],
+      "total_volume_m3": 1250.8,
+      "total_trips": 31
+    }
+  }
+  ```
+
+  **Примечание:** Возвращает только рейсы, где `trip.polygon_id` принадлежит полигонам LANDFILL организации. Для получения списка полигонов используйте `GET /polygons` из `snowops-operations-service` с фильтром по `organization_id`.
 
 ### Общие форматы
 

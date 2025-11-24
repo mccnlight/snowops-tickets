@@ -334,3 +334,50 @@ func (s *TripService) GetByID(ctx context.Context, principal model.Principal, id
 
 	return trip, nil
 }
+
+// ReceptionJournalInput входные данные для журнала приёма
+type ReceptionJournalInput struct {
+	PolygonIDs   []uuid.UUID
+	DateFrom     *time.Time
+	DateTo       *time.Time
+	ContractorID *uuid.UUID
+	Status       *model.TripStatus
+}
+
+// ReceptionJournalResult результат журнала приёма
+type ReceptionJournalResult struct {
+	Trips         []repository.ReceptionJournalEntry `json:"trips"`
+	TotalVolumeM3 float64                            `json:"total_volume_m3"`
+	TotalTrips    int                                `json:"total_trips"`
+}
+
+// GetReceptionJournal возвращает журнал приёма снега для LANDFILL
+func (s *TripService) GetReceptionJournal(ctx context.Context, principal model.Principal, input ReceptionJournalInput) (*ReceptionJournalResult, error) {
+	if !principal.IsLandfill() {
+		return nil, ErrPermissionDenied
+	}
+
+	filter := repository.ReceptionJournalFilter{
+		PolygonIDs:   input.PolygonIDs,
+		DateFrom:     input.DateFrom,
+		DateTo:       input.DateTo,
+		ContractorID: input.ContractorID,
+		Status:       input.Status,
+	}
+
+	entries, err := s.tripRepo.ListReceptionJournal(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+
+	var totalVolume float64
+	for _, entry := range entries {
+		totalVolume += entry.NetVolumeM3
+	}
+
+	return &ReceptionJournalResult{
+		Trips:         entries,
+		TotalVolumeM3: totalVolume,
+		TotalTrips:    len(entries),
+	}, nil
+}
