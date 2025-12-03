@@ -431,3 +431,27 @@ func (s *TicketService) canAccessTicket(ctx context.Context, principal model.Pri
 	// Драйвер без assignment и другие роли — нет доступа
 	return false, nil
 }
+
+func (s *TicketService) Delete(ctx context.Context, principal model.Principal, id string) error {
+	// Only KGU can delete tickets
+	if !principal.IsKgu() {
+		return ErrPermissionDenied
+	}
+
+	ticket, err := s.ticketRepo.GetByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrNotFound
+		}
+		return err
+	}
+
+	// Verify ticket was created by the principal's organization
+	if ticket.CreatedByOrgID != principal.OrgID {
+		return ErrPermissionDenied
+	}
+
+	// Delete ticket (cascades to assignments and appeals)
+	// trips.ticket_id will be set to NULL automatically via ON DELETE SET NULL
+	return s.ticketRepo.Delete(ctx, id)
+}

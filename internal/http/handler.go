@@ -58,6 +58,7 @@ func (h *Handler) Register(r *gin.Engine, authMiddleware gin.HandlerFunc) {
 		kgu.GET("/tickets/:id", h.getTicketDetails)
 		kgu.PUT("/tickets/:id/cancel", h.cancelTicket)
 		kgu.PUT("/tickets/:id/close", h.closeTicket)
+		kgu.DELETE("/tickets/:id", h.deleteTicket)
 	}
 
 	contractor := protected.Group("/contractor")
@@ -271,6 +272,27 @@ func (h *Handler) closeTicket(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, successResponse(gin.H{"message": "ticket closed"}))
+}
+
+func (h *Handler) deleteTicket(c *gin.Context) {
+	principal, ok := middleware.MustPrincipal(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, errorResponse("missing principal"))
+		return
+	}
+
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		c.JSON(http.StatusBadRequest, errorResponse("invalid ticket id"))
+		return
+	}
+
+	if err := h.ticketService.Delete(c.Request.Context(), principal, id); err != nil {
+		h.handleError(c, err)
+		return
+	}
+
+	c.Status(http.StatusNoContent)
 }
 
 func (h *Handler) completeTicket(c *gin.Context) {

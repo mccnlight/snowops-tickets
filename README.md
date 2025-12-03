@@ -7,7 +7,7 @@
 - Жизненный цикл тикета: `PLANNED → IN_PROGRESS → COMPLETED → CLOSED`, отмена (`CANCELLED`) разрешена только до появления фактов (рейсов/фактического старта).
 - Гранулярный RBAC:
   - `AKIMAT_ADMIN` — read-only по всем тикетам, рейсам и обжалованиям.
-  - `KGU_ZKH_ADMIN` — создание тикетов, отмена, закрытие, просмотр прогресса.
+  - `KGU_ZKH_ADMIN` — создание тикетов, отмена, закрытие, удаление, просмотр прогресса.
   - `CONTRACTOR_ADMIN` — управление назначениями, перевод в `IN_PROGRESS`/`COMPLETED`, доступ только к своим тикетам.
   - `DRIVER` — только собственные задания и апелляции.
   - `LANDFILL_ADMIN`, `LANDFILL_USER` — доступ к журналу приёма снега (`/landfill/reception-journal`).
@@ -88,6 +88,13 @@ go run ./cmd/ticket-service
 - `GET /kgu/tickets/:id` — карточка тикета.
 - `PUT /kgu/tickets/:id/cancel` — отменить тикет (доступно только если нет рейсов и `fact_start_at = null`).
 - `PUT /kgu/tickets/:id/close` — перевести `COMPLETED → CLOSED` после проверки.
+- `DELETE /kgu/tickets/:id` — удалить тикет (только тикеты, созданные организацией пользователя).
+  
+  **Поведение:**
+  - Удаление тикета каскадно удаляет связанные назначения (`ticket_assignments`) и апелляции (`appeals`)
+  - Рейсы (`trips`) остаются, но `ticket_id` становится `NULL` (ON DELETE SET NULL)
+  
+  **Ответ:** 204 No Content при успехе
 
 ### Подрядчик (`/contractor`)
 

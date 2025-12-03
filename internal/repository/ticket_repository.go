@@ -56,19 +56,19 @@ func (r *TicketRepository) CountIncompleteTripsByTicketID(ctx context.Context, t
 func (r *TicketRepository) CountIncompleteAssignmentsByTicketID(ctx context.Context, ticketID uuid.UUID) (int64, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.TicketAssignment{}).
-		Where("ticket_id = ? AND is_active = ? AND driver_mark_status != ?", 
+		Where("ticket_id = ? AND is_active = ? AND driver_mark_status != ?",
 			ticketID, true, model.DriverMarkStatusCompleted).
 		Count(&count).Error
 	return count, err
 }
 
 type TicketListFilter struct {
-	Status         *model.TicketStatus
-	ContractorID   *string
-	CleaningAreaID *string
-	ContractID     *string
-	CreatedByOrgID *string
-	DriverID       *string
+	Status           *model.TicketStatus
+	ContractorID     *string
+	CleaningAreaID   *string
+	ContractID       *string
+	CreatedByOrgID   *string
+	DriverID         *string
 	PlannedStartFrom *string
 	PlannedStartTo   *string
 	PlannedEndFrom   *string
@@ -203,4 +203,20 @@ func (r *TicketRepository) GetAppealsByTicketID(ctx context.Context, ticketID uu
 		Order("created_at DESC").
 		Find(&appeals).Error
 	return appeals, err
+}
+
+// Delete deletes a ticket by ID
+func (r *TicketRepository) Delete(ctx context.Context, id string) error {
+	result := r.db.WithContext(ctx).
+		Table("tickets").
+		Where("id = ?", id).
+		Delete(nil)
+
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
