@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -65,6 +66,26 @@ func (r *AssignmentRepository) UpdateDriverMarkStatus(ctx context.Context, id st
 		Update("driver_mark_status", status).Error
 }
 
+// UpdateTripStartedAt обновляет время начала рейса и статус
+func (r *AssignmentRepository) UpdateTripStartedAt(ctx context.Context, id string, startedAt time.Time, status model.DriverMarkStatus) error {
+	return r.db.WithContext(ctx).Model(&model.TicketAssignment{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"trip_started_at":    startedAt,
+			"driver_mark_status": status,
+		}).Error
+}
+
+// UpdateTripFinishedAt обновляет время окончания рейса и статус
+func (r *AssignmentRepository) UpdateTripFinishedAt(ctx context.Context, id string, finishedAt time.Time, status model.DriverMarkStatus) error {
+	return r.db.WithContext(ctx).Model(&model.TicketAssignment{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"trip_finished_at":   finishedAt,
+			"driver_mark_status": status,
+		}).Error
+}
+
 func (r *AssignmentRepository) HasActiveAssignment(ctx context.Context, ticketID, driverID uuid.UUID) (bool, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.TicketAssignment{}).
@@ -104,4 +125,27 @@ func (r *AssignmentRepository) FindActiveByVehicle(ctx context.Context, vehicleI
 		return nil, err
 	}
 	return &assignment, nil
+}
+
+// GetVehiclePlateNumber получает номер машины по vehicle_id из таблицы vehicles
+// Таблица vehicles может быть в общей БД или в другом сервисе
+func (r *AssignmentRepository) GetVehiclePlateNumber(ctx context.Context, vehicleID uuid.UUID) (string, error) {
+	var result struct {
+		PlateNumber string `gorm:"column:plate_number"`
+	}
+
+	err := r.db.WithContext(ctx).
+		Table("vehicles").
+		Select("plate_number").
+		Where("id = ?", vehicleID).
+		First(&result).Error
+
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", fmt.Errorf("vehicle with id %s not found", vehicleID)
+		}
+		return "", fmt.Errorf("failed to get vehicle plate number: %w", err)
+	}
+
+	return result.PlateNumber, nil
 }

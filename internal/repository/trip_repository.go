@@ -73,6 +73,22 @@ func (r *TripRepository) GetFirstTripByTicketID(ctx context.Context, ticketID uu
 	return &trip, nil
 }
 
+// FindByAssignmentID находит trip по ticket_assignment_id
+func (r *TripRepository) FindByAssignmentID(ctx context.Context, assignmentID uuid.UUID) (*model.Trip, error) {
+	var trip model.Trip
+	err := r.db.WithContext(ctx).
+		Where("ticket_assignment_id = ?", assignmentID).
+		Order("entry_at DESC").
+		First(&trip).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &trip, nil
+}
+
 // ReceptionJournalEntry представляет запись в журнале приёма снега
 type ReceptionJournalEntry struct {
 	TripID              uuid.UUID  `json:"trip_id"`

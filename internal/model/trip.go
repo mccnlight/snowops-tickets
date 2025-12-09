@@ -37,6 +37,8 @@ type Trip struct {
 	ExitVolumeEventID   *uuid.UUID `gorm:"type:uuid" json:"exit_volume_event_id"`
 	DetectedVolumeEntry *float64   `json:"detected_volume_entry"`
 	DetectedVolumeExit  *float64   `json:"detected_volume_exit"`
+	TotalVolumeM3       *float64   `gorm:"type:double precision" json:"total_volume_m3,omitempty"`
+	AutoCreated         bool       `gorm:"default:true" json:"auto_created"`
 	EntryAt             time.Time  `gorm:"not null" json:"entry_at"`
 	ExitAt              *time.Time `json:"exit_at"`
 	Status              TripStatus `gorm:"type:trip_status;not null;default:OK" json:"status"`

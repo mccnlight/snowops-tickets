@@ -28,6 +28,8 @@ type ExternalServicesConfig struct {
 	RolesServiceURL      string
 	OperationsServiceURL string
 	AIServiceURL         string
+	ANPRServiceURL       string
+	ANPRInternalToken    string
 }
 
 type Config struct {
@@ -71,6 +73,8 @@ func Load() (*Config, error) {
 			RolesServiceURL:      v.GetString("ROLES_SERVICE_URL"),
 			OperationsServiceURL: v.GetString("OPERATIONS_SERVICE_URL"),
 			AIServiceURL:         v.GetString("AI_SERVICE_URL"),
+			ANPRServiceURL:       v.GetString("ANPR_SERVICE_URL"),
+			ANPRInternalToken:    v.GetString("ANPR_INTERNAL_TOKEN"),
 		},
 	}
 

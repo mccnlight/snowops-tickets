@@ -3,13 +3,17 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 
+	"ticket-service/internal/client"
 	"ticket-service/internal/model"
 	"ticket-service/internal/repository"
+	"ticket-service/internal/utils"
 )
 
 type TripService struct {
@@ -17,6 +21,8 @@ type TripService struct {
 	ticketRepo     *repository.TicketRepository
 	assignmentRepo *repository.AssignmentRepository
 	ticketService  *TicketService
+	anprClient     *client.ANPRClient
+	log            zerolog.Logger
 }
 
 func NewTripService(
@@ -24,12 +30,16 @@ func NewTripService(
 	ticketRepo *repository.TicketRepository,
 	assignmentRepo *repository.AssignmentRepository,
 	ticketService *TicketService,
+	anprClient *client.ANPRClient,
+	log zerolog.Logger,
 ) *TripService {
 	return &TripService{
 		tripRepo:       tripRepo,
 		ticketRepo:     ticketRepo,
 		assignmentRepo: assignmentRepo,
 		ticketService:  ticketService,
+		anprClient:     anprClient,
+		log:            log,
 	}
 }
 
@@ -380,4 +390,188 @@ func (s *TripService) GetReceptionJournal(ctx context.Context, principal model.P
 		TotalVolumeM3: totalVolume,
 		TotalTrips:    len(entries),
 	}, nil
+}
+
+// CalculateVolumeForAssignment вычисляет объем перевезенного снега для назначения
+// Получает события ANPR за период рейса и суммирует объемы всех событий въезда
+// Принимает уже полученное assignment, чтобы избежать дублирования запросов
+func (s *TripService) CalculateVolumeForAssignment(ctx context.Context, assignment *model.TicketAssignment) (float64, error) {
+	// Проверяем, что есть временные метки
+	if assignment.TripStartedAt == nil {
+		return 0, fmt.Errorf("trip not started (trip_started_at is nil)")
+	}
+	if assignment.TripFinishedAt == nil {
+		return 0, fmt.Errorf("trip not finished (trip_finished_at is nil)")
+	}
+
+	// Получаем номер машины
+	plateNumber, err := s.assignmentRepo.GetVehiclePlateNumber(ctx, assignment.VehicleID)
+	if err != nil {
+		s.log.Warn().
+			Err(err).
+			Str("assignment_id", assignment.ID.String()).
+			Str("vehicle_id", assignment.VehicleID.String()).
+			Msg("failed to get vehicle plate number")
+		return 0, fmt.Errorf("failed to get vehicle plate number: %w", err)
+	}
+
+	// Нормализуем номер
+	normalizedPlate := utils.NormalizePlate(plateNumber)
+	if normalizedPlate == "" {
+		return 0, fmt.Errorf("invalid plate number format")
+	}
+
+	// Запрашиваем события ANPR за период рейса (только въезды)
+	direction := "entry"
+	events, err := s.anprClient.GetEventsByPlateAndTime(
+		ctx,
+		normalizedPlate,
+		*assignment.TripStartedAt,
+		*assignment.TripFinishedAt,
+		&direction,
+	)
+	if err != nil {
+		s.log.Error().
+			Err(err).
+			Str("assignment_id", assignment.ID.String()).
+			Str("plate", normalizedPlate).
+			Time("start", *assignment.TripStartedAt).
+			Time("end", *assignment.TripFinishedAt).
+			Msg("failed to get ANPR events")
+		return 0, fmt.Errorf("failed to get ANPR events: %w", err)
+	}
+
+	// Суммируем объемы всех событий въезда
+	var totalVolume float64
+	eventCount := 0
+	for _, event := range events {
+		if event.SnowVolumeM3 != nil {
+			totalVolume += *event.SnowVolumeM3
+			eventCount++
+		}
+	}
+
+	s.log.Info().
+		Str("assignment_id", assignment.ID.String()).
+		Str("plate", normalizedPlate).
+		Float64("total_volume_m3", totalVolume).
+		Int("events_count", eventCount).
+		Int("total_events", len(events)).
+		Msg("calculated volume for assignment")
+
+	if totalVolume == 0 && len(events) > 0 {
+		s.log.Warn().
+			Str("assignment_id", assignment.ID.String()).
+			Str("plate", normalizedPlate).
+			Int("events_count", len(events)).
+			Msg("trip completed with zero volume (all events have nil or zero volume)")
+	}
+
+	return totalVolume, nil
+}
+
+// CompleteTripAndCalculateVolume завершает рейс, рассчитывает объем и создает/обновляет запись trip
+// Вызывается после того, как trip_finished_at уже установлен в AssignmentService
+func (s *TripService) CompleteTripAndCalculateVolume(ctx context.Context, assignmentID uuid.UUID) (*model.Trip, error) {
+	// Получаем назначение (оно уже обновлено с trip_finished_at)
+	assignment, err := s.assignmentRepo.GetByID(ctx, assignmentID.String())
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("failed to get assignment: %w", err)
+	}
+
+	// Проверяем, что рейс был начат и завершен
+	if assignment.TripStartedAt == nil {
+		return nil, fmt.Errorf("trip not started")
+	}
+	if assignment.TripFinishedAt == nil {
+		return nil, fmt.Errorf("trip not finished (trip_finished_at is nil)")
+	}
+
+	// Рассчитываем объем (передаем уже полученное assignment)
+	totalVolume, err := s.CalculateVolumeForAssignment(ctx, assignment)
+	if err != nil {
+		s.log.Error().
+			Err(err).
+			Str("assignment_id", assignmentID.String()).
+			Msg("failed to calculate volume, completing trip with volume 0")
+		// Продолжаем выполнение, но с объемом 0
+		// Это нормальная ситуация - если ANPR недоступен или события отсутствуют
+		totalVolume = 0
+	}
+
+	// Получаем номер машины для записи в trip
+	plateNumber, err := s.assignmentRepo.GetVehiclePlateNumber(ctx, assignment.VehicleID)
+	if err != nil {
+		s.log.Warn().
+			Err(err).
+			Str("assignment_id", assignmentID.String()).
+			Msg("failed to get vehicle plate number for trip, using empty string")
+		plateNumber = ""
+	}
+	normalizedPlate := utils.NormalizePlate(plateNumber)
+
+	// Ищем существующий trip для этого назначения
+	existingTrip, err := s.tripRepo.FindByAssignmentID(ctx, assignmentID)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("failed to find existing trip: %w", err)
+	}
+
+	if existingTrip != nil {
+		// Обновляем существующий trip
+		existingTrip.ExitAt = assignment.TripFinishedAt
+		existingTrip.TotalVolumeM3 = &totalVolume
+		existingTrip.Status = model.TripStatusOK
+		existingTrip.AutoCreated = true
+
+		if err := s.tripRepo.Update(ctx, existingTrip); err != nil {
+			return nil, fmt.Errorf("failed to update trip: %w", err)
+		}
+
+		s.log.Info().
+			Str("trip_id", existingTrip.ID.String()).
+			Str("assignment_id", assignmentID.String()).
+			Float64("total_volume_m3", totalVolume).
+			Msg("updated existing trip with calculated volume")
+
+		return existingTrip, nil
+	}
+
+	// Создаем новый trip
+	trip := &model.Trip{
+		TicketID:           &assignment.TicketID,
+		TicketAssignmentID: &assignmentID,
+		DriverID:           &assignment.DriverID,
+		VehicleID:          &assignment.VehicleID,
+		VehiclePlateNumber: normalizedPlate,
+		EntryAt:            *assignment.TripStartedAt,
+		ExitAt:             assignment.TripFinishedAt,
+		TotalVolumeM3:      &totalVolume,
+		AutoCreated:        true,
+		Status:             model.TripStatusOK,
+	}
+
+	if err := s.tripRepo.Create(ctx, trip); err != nil {
+		return nil, fmt.Errorf("failed to create trip: %w", err)
+	}
+
+	s.log.Info().
+		Str("trip_id", trip.ID.String()).
+		Str("assignment_id", assignmentID.String()).
+		Float64("total_volume_m3", totalVolume).
+		Msg("created new trip with calculated volume")
+
+	// Автоматический переход статуса тикета при создании рейса
+	if s.ticketService != nil {
+		if err := s.ticketService.OnTripCreated(ctx, assignment.TicketID); err != nil {
+			s.log.Warn().
+				Err(err).
+				Str("ticket_id", assignment.TicketID.String()).
+				Msg("failed to update ticket status on trip creation")
+		}
+	}
+
+	return trip, nil
 }

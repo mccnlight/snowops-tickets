@@ -199,6 +199,20 @@ var migrationStatements = []string{
 	`CREATE INDEX IF NOT EXISTS idx_ticket_assignments_ticket_id ON ticket_assignments (ticket_id);`,
 	`CREATE INDEX IF NOT EXISTS idx_ticket_assignments_driver_id ON ticket_assignments (driver_id);`,
 	`CREATE INDEX IF NOT EXISTS idx_ticket_assignments_vehicle_id ON ticket_assignments (vehicle_id);`,
+	`DO $$
+	BEGIN
+		-- Добавляем trip_started_at если его нет
+		IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+			WHERE table_name = 'ticket_assignments' AND column_name = 'trip_started_at') THEN
+			ALTER TABLE ticket_assignments ADD COLUMN trip_started_at TIMESTAMPTZ;
+		END IF;
+		-- Добавляем trip_finished_at если его нет
+		IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+			WHERE table_name = 'ticket_assignments' AND column_name = 'trip_finished_at') THEN
+			ALTER TABLE ticket_assignments ADD COLUMN trip_finished_at TIMESTAMPTZ;
+		END IF;
+	END
+	$$;`,
 	`CREATE TABLE IF NOT EXISTS trips (
 		id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 		ticket_id UUID REFERENCES tickets(id) ON DELETE SET NULL,
@@ -261,6 +275,20 @@ var migrationStatements = []string{
 		IF EXISTS (SELECT 1 FROM information_schema.columns 
 			WHERE table_name = 'trips' AND column_name = 'status') THEN
 			CREATE INDEX IF NOT EXISTS idx_trips_status ON trips (status);
+		END IF;
+	END
+	$$;`,
+	`DO $$
+	BEGIN
+		-- Добавляем total_volume_m3 если его нет
+		IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+			WHERE table_name = 'trips' AND column_name = 'total_volume_m3') THEN
+			ALTER TABLE trips ADD COLUMN total_volume_m3 DOUBLE PRECISION;
+		END IF;
+		-- Добавляем auto_created если его нет
+		IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+			WHERE table_name = 'trips' AND column_name = 'auto_created') THEN
+			ALTER TABLE trips ADD COLUMN auto_created BOOLEAN DEFAULT true;
 		END IF;
 	END
 	$$;`,

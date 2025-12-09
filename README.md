@@ -50,12 +50,14 @@ go run ./cmd/ticket-service
 | `DB_MAX_IDLE_CONNS`    | максимум соединений в пуле                                          | `10`                                                              |
 | `DB_CONN_MAX_LIFETIME` | TTL соединения                                                     | `1h`                                                              |
 | `JWT_ACCESS_SECRET`    | секрет для проверки JWT                                            | обязательная                                                      |
+| `ANPR_SERVICE_URL`     | URL ANPR сервиса для получения событий                             | обязательная (например, `http://anpr-service:8082`)               |
+| `ANPR_INTERNAL_TOKEN`  | внутренний токен для запросов к ANPR сервису                       | обязательная                                                      |
 
 ## Доменные сущности
 
 - **Ticket** — участок + подрядчик + контракт + плановый период. Никаких нормативов, только фактические данные.
-- **TicketAssignment** — связь `ticket ↔ driver ↔ vehicle`, статус отметки водителя (`NOT_STARTED`, `IN_WORK`, `COMPLETED`).
-- **Trip** — факт рейса от камер (entry/exit LPR и volume события). Статусы: `OK`, `ROUTE_VIOLATION`, `FOREIGN_AREA`, `MISMATCH_PLATE`, `OVER_CAPACITY`, `NO_AREA_WORK`, `NO_ASSIGNMENT`, `SUSPICIOUS_VOLUME`, `OVER_CONTRACT_LIMIT`. Поле `violation_reason` заполняется `snowops-violations-service` для быстрого отображения причины нарушения в карточке тикета.
+- **TicketAssignment** — связь `ticket ↔ driver ↔ vehicle`, статус отметки водителя (`NOT_STARTED`, `IN_WORK`, `COMPLETED`). Содержит поля `trip_started_at` и `trip_finished_at` для автоматического учета времени рейсов.
+- **Trip** — факт рейса от камер (entry/exit LPR и volume события). Статусы: `OK`, `ROUTE_VIOLATION`, `FOREIGN_AREA`, `MISMATCH_PLATE`, `OVER_CAPACITY`, `NO_AREA_WORK`, `NO_ASSIGNMENT`, `SUSPICIOUS_VOLUME`, `OVER_CONTRACT_LIMIT`. Поле `violation_reason` заполняется `snowops-violations-service` для быстрого отображения причины нарушения в карточке тикета. Поля `total_volume_m3` (рассчитанный объем снега) и `auto_created` (флаг автоматического создания) добавлены для автоматического учета рейсов.
 - **Appeal** — апелляция водителя по рейсу (`SUBMITTED → UNDER_REVIEW → NEED_INFO → APPROVED/REJECTED → CLOSED`).
 
 ## API
@@ -117,8 +119,11 @@ go run ./cmd/ticket-service
 - `GET /driver/tickets` — тикеты, где у водителя есть активное назначение.
 - `GET /driver/tickets/:id` — карточка тикета, фильтрована по рейсам/назначениям конкретного водителя.
 - Обновление статуса назначения:
-  - `PUT /driver/assignments/:id/mark-in-work` — установить `IN_WORK` (автоматически переведёт тикет в `IN_PROGRESS`, если это первый факт).
-  - `PUT /driver/assignments/:id/mark-completed` — установить `COMPLETED`.
+  - `PUT /driver/assignments/:id/mark-in-work` — установить `IN_WORK` и зафиксировать время начала рейса (`trip_started_at`). Автоматически переведёт тикет в `IN_PROGRESS`, если это первый факт.
+  - `PUT /driver/assignments/:id/mark-completed` — установить `COMPLETED` и зафиксировать время окончания рейса (`trip_finished_at`). Автоматически:
+    - Рассчитывает объем перевезенного снега на основе событий ANPR за период рейса (суммирует `snow_volume_m3` всех событий въезда)
+    - Создает или обновляет запись `Trip` с рассчитанным объемом (`total_volume_m3`) и флагом `auto_created=true`
+    - Если расчет объема не удался (ANPR недоступен, события отсутствуют), рейс завершается с объемом 0
 - Апелляции:
   - `POST /driver/appeals`
     ```json

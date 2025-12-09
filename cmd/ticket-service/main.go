@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"ticket-service/internal/auth"
+	"ticket-service/internal/client"
 	"ticket-service/internal/config"
 	"ticket-service/internal/db"
 	httphandler "ticket-service/internal/http"
@@ -34,10 +35,13 @@ func main() {
 	tripRepo := repository.NewTripRepository(database)
 	appealRepo := repository.NewAppealRepository(database)
 
-	// Services
+	// Clients
+	anprClient := client.NewANPRClient(cfg)
+
+	// Services (нужно создать TripService до AssignmentService, т.к. AssignmentService зависит от TripService)
 	ticketService := service.NewTicketService(ticketRepo, tripRepo, assignmentRepo, appealRepo)
-	assignmentService := service.NewAssignmentService(assignmentRepo, ticketRepo, ticketService)
-	tripService := service.NewTripService(tripRepo, ticketRepo, assignmentRepo, ticketService)
+	tripService := service.NewTripService(tripRepo, ticketRepo, assignmentRepo, ticketService, anprClient, appLogger)
+	assignmentService := service.NewAssignmentService(assignmentRepo, ticketRepo, ticketService, tripService)
 	appealService := service.NewAppealService(appealRepo, tripRepo, ticketRepo, assignmentRepo)
 
 	tokenParser := auth.NewParser(cfg.Auth.AccessSecret)

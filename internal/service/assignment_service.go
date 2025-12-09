@@ -16,17 +16,20 @@ type AssignmentService struct {
 	assignmentRepo *repository.AssignmentRepository
 	ticketRepo     *repository.TicketRepository
 	ticketService  *TicketService
+	tripService    *TripService
 }
 
 func NewAssignmentService(
 	assignmentRepo *repository.AssignmentRepository,
 	ticketRepo *repository.TicketRepository,
 	ticketService *TicketService,
+	tripService *TripService,
 ) *AssignmentService {
 	return &AssignmentService{
 		assignmentRepo: assignmentRepo,
 		ticketRepo:     ticketRepo,
 		ticketService:  ticketService,
+		tripService:    tripService,
 	}
 }
 
@@ -146,9 +149,37 @@ func (s *AssignmentService) UpdateDriverMarkStatus(ctx context.Context, principa
 		return ErrConflict
 	}
 
-	// Обновляем статус
-	if err := s.assignmentRepo.UpdateDriverMarkStatus(ctx, id, status); err != nil {
-		return err
+	// Обновляем статус и временные метки
+	now := time.Now()
+	if status == model.DriverMarkStatusInWork {
+		// Проверяем, что рейс еще не начат
+		if assignment.TripStartedAt != nil {
+			return ErrConflict // рейс уже начат
+		}
+		// При начале работы фиксируем время начала рейса и обновляем статус
+		if err := s.assignmentRepo.UpdateTripStartedAt(ctx, id, now, status); err != nil {
+			return err
+		}
+		assignment.TripStartedAt = &now
+	} else if status == model.DriverMarkStatusCompleted {
+		// Проверяем, что рейс был начат
+		if assignment.TripStartedAt == nil {
+			return ErrConflict // нельзя завершить рейс, который не был начат
+		}
+		// Проверяем, что рейс еще не завершен
+		if assignment.TripFinishedAt != nil {
+			return ErrConflict // рейс уже завершен
+		}
+		// При завершении фиксируем время окончания рейса и обновляем статус
+		if err := s.assignmentRepo.UpdateTripFinishedAt(ctx, id, now, status); err != nil {
+			return err
+		}
+		assignment.TripFinishedAt = &now
+	} else {
+		// Для других статусов просто обновляем статус
+		if err := s.assignmentRepo.UpdateDriverMarkStatus(ctx, id, status); err != nil {
+			return err
+		}
 	}
 
 	// Если водитель отметил "В работе", проверяем, нужно ли перевести тикет в IN_PROGRESS
@@ -164,6 +195,22 @@ func (s *AssignmentService) UpdateDriverMarkStatus(ctx context.Context, principa
 	}
 
 	if status == model.DriverMarkStatusCompleted {
+		// Рассчитываем объем и создаем/обновляем trip
+		// Если расчет объема или создание trip не удались, рейс все равно считается завершенным
+		// (assignment уже обновлен с trip_finished_at и COMPLETED статусом)
+		if s.tripService != nil {
+			assignmentUUID, err := uuid.Parse(id)
+			if err == nil {
+				_, err := s.tripService.CompleteTripAndCalculateVolume(ctx, assignmentUUID)
+				if err != nil {
+					// Логируем ошибку, но НЕ прерываем выполнение
+					// Рейс должен быть завершен даже если расчет объема или создание trip не удались
+					// Согласно ТЗ, лучше завершить рейс с объемом 0, чем вернуть ошибку пользователю
+					// Ошибка уже залогирована в CompleteTripAndCalculateVolume
+				}
+			}
+		}
+
 		if err := s.ticketService.TryAutoComplete(ctx, assignment.TicketID); err != nil {
 			return err
 		}
