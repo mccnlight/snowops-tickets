@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 
 	"ticket-service/internal/model"
@@ -24,6 +25,8 @@ type TicketService struct {
 	tripRepo       *repository.TripRepository
 	assignmentRepo *repository.AssignmentRepository
 	appealRepo     *repository.AppealRepository
+	areaAccessRepo *repository.CleaningAreaAccessRepository
+	log            zerolog.Logger
 }
 
 func NewTicketService(
@@ -31,12 +34,16 @@ func NewTicketService(
 	tripRepo *repository.TripRepository,
 	assignmentRepo *repository.AssignmentRepository,
 	appealRepo *repository.AppealRepository,
+	areaAccessRepo *repository.CleaningAreaAccessRepository,
+	log zerolog.Logger,
 ) *TicketService {
 	return &TicketService{
 		ticketRepo:     ticketRepo,
 		tripRepo:       tripRepo,
 		assignmentRepo: assignmentRepo,
 		appealRepo:     appealRepo,
+		areaAccessRepo: areaAccessRepo,
+		log:            log,
 	}
 }
 
@@ -91,6 +98,23 @@ func (s *TicketService) Create(ctx context.Context, principal model.Principal, i
 
 	if err := s.ticketRepo.Create(ctx, ticket); err != nil {
 		return nil, err
+	}
+
+	// Automatically grant access to cleaning area for contractor
+	// This is best-effort: if it fails, we log but don't fail ticket creation
+	if err := s.areaAccessRepo.Grant(ctx, cleaningAreaID, contractorID, "TICKET"); err != nil {
+		s.log.Warn().
+			Err(err).
+			Str("cleaning_area_id", cleaningAreaID.String()).
+			Str("contractor_id", contractorID.String()).
+			Str("ticket_id", ticket.ID.String()).
+			Msg("failed to grant cleaning area access for contractor (ticket created successfully)")
+	} else {
+		s.log.Info().
+			Str("cleaning_area_id", cleaningAreaID.String()).
+			Str("contractor_id", contractorID.String()).
+			Str("ticket_id", ticket.ID.String()).
+			Msg("automatically granted cleaning area access for contractor")
 	}
 
 	return ticket, nil
