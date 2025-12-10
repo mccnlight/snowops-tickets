@@ -35,13 +35,14 @@ func main() {
 	tripRepo := repository.NewTripRepository(database)
 	appealRepo := repository.NewAppealRepository(database)
 	areaAccessRepo := repository.NewCleaningAreaAccessRepository(database)
+	polygonAccessRepo := repository.NewPolygonAccessRepository(database)
 
 	// Clients
 	anprClient := client.NewANPRClient(cfg)
 
 	// Services (нужно создать TripService до AssignmentService, т.к. AssignmentService зависит от TripService)
 	ticketService := service.NewTicketService(ticketRepo, tripRepo, assignmentRepo, appealRepo, areaAccessRepo, appLogger)
-	tripService := service.NewTripService(tripRepo, ticketRepo, assignmentRepo, ticketService, anprClient, appLogger)
+	tripService := service.NewTripService(tripRepo, ticketRepo, assignmentRepo, ticketService, anprClient, polygonAccessRepo, appLogger)
 	assignmentService := service.NewAssignmentService(assignmentRepo, ticketRepo, ticketService, tripService)
 	appealService := service.NewAppealService(appealRepo, tripRepo, ticketRepo, assignmentRepo)
 

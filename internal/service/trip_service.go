@@ -17,12 +17,13 @@ import (
 )
 
 type TripService struct {
-	tripRepo       *repository.TripRepository
-	ticketRepo     *repository.TicketRepository
-	assignmentRepo *repository.AssignmentRepository
-	ticketService  *TicketService
-	anprClient     *client.ANPRClient
-	log            zerolog.Logger
+	tripRepo          *repository.TripRepository
+	ticketRepo        *repository.TicketRepository
+	assignmentRepo    *repository.AssignmentRepository
+	ticketService     *TicketService
+	anprClient        *client.ANPRClient
+	polygonAccessRepo *repository.PolygonAccessRepository
+	log               zerolog.Logger
 }
 
 func NewTripService(
@@ -31,15 +32,17 @@ func NewTripService(
 	assignmentRepo *repository.AssignmentRepository,
 	ticketService *TicketService,
 	anprClient *client.ANPRClient,
+	polygonAccessRepo *repository.PolygonAccessRepository,
 	log zerolog.Logger,
 ) *TripService {
 	return &TripService{
-		tripRepo:       tripRepo,
-		ticketRepo:     ticketRepo,
-		assignmentRepo: assignmentRepo,
-		ticketService:  ticketService,
-		anprClient:     anprClient,
-		log:            log,
+		tripRepo:          tripRepo,
+		ticketRepo:        ticketRepo,
+		assignmentRepo:    assignmentRepo,
+		ticketService:     ticketService,
+		anprClient:        anprClient,
+		polygonAccessRepo: polygonAccessRepo,
+		log:               log,
 	}
 }
 
@@ -261,6 +264,31 @@ func (s *TripService) Create(ctx context.Context, input CreateTripInput) (*model
 	if ticketID != nil && s.ticketService != nil {
 		if err := s.ticketService.OnTripCreated(ctx, *ticketID); err != nil {
 			return nil, err
+		}
+	}
+
+	// Automatically grant polygon access for contractor if trip has polygon_id and ticket_id
+	// This is best-effort: if it fails, we log but don't fail trip creation
+	if polygonID != nil && ticketID != nil {
+		// Get ticket to retrieve contractor ID
+		ticket, err := s.ticketRepo.GetByID(ctx, ticketID.String())
+		if err == nil && ticket != nil {
+			if err := s.polygonAccessRepo.Grant(ctx, *polygonID, ticket.ContractorID, "TRIP"); err != nil {
+				s.log.Warn().
+					Err(err).
+					Str("polygon_id", polygonID.String()).
+					Str("contractor_id", ticket.ContractorID.String()).
+					Str("trip_id", trip.ID.String()).
+					Str("ticket_id", ticketID.String()).
+					Msg("failed to grant polygon access for contractor (trip created successfully)")
+			} else {
+				s.log.Info().
+					Str("polygon_id", polygonID.String()).
+					Str("contractor_id", ticket.ContractorID.String()).
+					Str("trip_id", trip.ID.String()).
+					Str("ticket_id", ticketID.String()).
+					Msg("automatically granted polygon access for contractor")
+			}
 		}
 	}
 
